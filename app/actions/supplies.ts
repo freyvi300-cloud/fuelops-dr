@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
-import { PaymentType } from "@prisma/client"
+import { PaymentType, InvoiceStatus, Prisma } from "@prisma/client"
 import { computeInventoryBalance } from "@/lib/inventory-utils"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ export interface SupplyFormData {
 
 export interface ConfirmedSupplyResult {
   id:             string
+  invoiceNumber:  string   // e.g. INV-000001
   customerName:   string
   truckCode:      string | null
   truckName:      string | null
@@ -40,6 +41,20 @@ export interface SerializedSupply {
   paymentType:    string
   notes:          string | null
   suppliedAt:     string
+}
+
+// ─── Invoice number generation ────────────────────────────────────────────────
+
+async function generateInvoiceNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const last = await tx.invoice.findFirst({
+    orderBy: { invoiceNumber: "desc" },
+    select:  { invoiceNumber: true },
+  })
+  if (!last) return "INV-000001"
+  const match = last.invoiceNumber.match(/INV-(\d+)/)
+  if (!match) return "INV-000001"
+  const next = parseInt(match[1]) + 1
+  return `INV-${String(next).padStart(6, "0")}`
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -67,22 +82,19 @@ export async function getRecentSupplies(limit = 10): Promise<SerializedSupply[]>
   }))
 }
 
-// ─── Confirm supply (atomic transaction) ─────────────────────────────────────
+// ─── Confirm supply — atomic transaction ─────────────────────────────────────
 
 export async function confirmSupply(data: SupplyFormData): Promise<ConfirmedSupplyResult> {
   const { customerId, truckId, gallons, pricePerGallon, paymentType, meterPhotoB64, notes } = data
 
-  // ── Pre-validate outside transaction (better error messages) ──────────────
-  if (gallons <= 0) throw new Error("Los galones deben ser mayores a cero.")
+  // ── Pre-validation ────────────────────────────────────────────────────────
+  if (gallons <= 0)        throw new Error("Los galones deben ser mayores a cero.")
   if (pricePerGallon <= 0) throw new Error("El precio por galón debe ser mayor a cero.")
 
   const customer = await prisma.customer.findUnique({ where: { id: customerId } })
   if (!customer) throw new Error("Cliente no encontrado.")
 
-  // Inventory check
-  const movements = await prisma.inventoryMovement.findMany({
-    select: { type: true, gallons: true },
-  })
+  const movements = await prisma.inventoryMovement.findMany({ select: { type: true, gallons: true } })
   const available = computeInventoryBalance(movements)
   if (gallons > available) {
     throw new Error(
@@ -92,19 +104,16 @@ export async function confirmSupply(data: SupplyFormData): Promise<ConfirmedSupp
 
   const total = gallons * pricePerGallon
 
-  // Credit limit check
-  if (paymentType === "CREDIT") {
+  if (paymentType === "CREDIT" && customer.creditLimit.toNumber() > 0) {
     const newBalance = customer.currentBalance.toNumber() + total
-    if (newBalance > customer.creditLimit.toNumber() && customer.creditLimit.toNumber() > 0) {
-      throw new Error(
-        `El total (${total.toLocaleString("es-DO", { style: "currency", currency: "DOP" })}) supera el límite de crédito disponible del cliente.`
-      )
+    if (newBalance > customer.creditLimit.toNumber()) {
+      throw new Error("El total supera el límite de crédito disponible del cliente.")
     }
   }
 
-  // ── Atomic transaction ─────────────────────────────────────────────────────
+  // ── Atomic transaction: Supply + InventoryMovement + Customer + Invoice ───
   const supply = await prisma.$transaction(async (tx) => {
-    // 1. Create supply record
+    // 1. Create supply
     const created = await tx.supply.create({
       data: {
         customerId,
@@ -122,19 +131,19 @@ export async function confirmSupply(data: SupplyFormData): Promise<ConfirmedSupp
       },
     })
 
-    // 2. Decrement inventory (OUT movement linked to this supply)
+    // 2. Decrement inventory
     await tx.inventoryMovement.create({
       data: {
         type:        "OUT",
         gallons,
         reference:   `Suministro #${created.id.slice(-6).toUpperCase()}`,
-        description: `Cliente: ${customer.name}${created.truck ? ` · Equipo: ${created.truck.code}` : ""}`,
+        description: `Cliente: ${customer.name}${created.truck ? ` · ${created.truck.code}` : ""}`,
         supplyId:    created.id,
         movedAt:     new Date(),
       },
     })
 
-    // 3. Update customer: pendingGallons always; currentBalance only for CREDIT
+    // 3. Update customer balances
     await tx.customer.update({
       where: { id: customerId },
       data: {
@@ -143,24 +152,50 @@ export async function confirmSupply(data: SupplyFormData): Promise<ConfirmedSupp
       },
     })
 
-    return created
+    // 4. Auto-generate invoice
+    const invoiceNumber = await generateInvoiceNumber(tx)
+    const isCash        = paymentType === "CASH"
+    const dueDate       = isCash ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // +30 days
+
+    await tx.invoice.create({
+      data: {
+        invoiceNumber,
+        supplyId:    created.id,
+        customerId,
+        truckId:     truckId || null,
+        subtotal:    total,              // tax/discount = 0 → subtotal = total
+        tax:         0,
+        discount:    0,
+        total,
+        amountPaid:  isCash ? total : 0,
+        balanceDue:  isCash ? 0     : total,
+        status:      isCash ? InvoiceStatus.PAID : InvoiceStatus.PENDING,
+        issueDate:   new Date(),
+        dueDate,
+        notes:       null,
+      },
+    })
+
+    return { created, invoiceNumber }
   })
 
-  // ── Revalidate affected pages ──────────────────────────────────────────────
+  // ── Revalidate ────────────────────────────────────────────────────────────
   revalidatePath("/suministro")
   revalidatePath("/inventario")
   revalidatePath("/clientes")
+  revalidatePath("/facturas")
   revalidatePath("/")
 
   return {
-    id:             supply.id,
-    customerName:   supply.customer.name,
-    truckCode:      supply.truck?.code ?? null,
-    truckName:      supply.truck?.name ?? null,
+    id:             supply.created.id,
+    invoiceNumber:  supply.invoiceNumber,
+    customerName:   supply.created.customer.name,
+    truckCode:      supply.created.truck?.code ?? null,
+    truckName:      supply.created.truck?.name ?? null,
     gallons,
     pricePerGallon,
     total,
     paymentType,
-    suppliedAt:     supply.suppliedAt.toISOString(),
+    suppliedAt:     supply.created.suppliedAt.toISOString(),
   }
 }

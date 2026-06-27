@@ -318,13 +318,19 @@ function SupplyReceipt({ supply, onReset }: { supply: ConfirmedSupplyResult; onR
           {/* Receipt card */}
           <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
             style={{ boxShadow: "var(--shadow-card)" }}>
-            <div className="px-6 py-4 bg-emerald-50 border-b border-emerald-100">
-              <p className="text-xs font-sans font-semibold text-emerald-700 uppercase tracking-wider">
-                Comprobante de suministro
-              </p>
-              <p className="text-[11px] font-sans text-emerald-600 mt-0.5">
-                ID: {supply.id.slice(-8).toUpperCase()}
-              </p>
+            <div className="px-6 py-4 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-sans font-semibold text-emerald-700 uppercase tracking-wider">
+                  Comprobante de suministro
+                </p>
+                <p className="text-[11px] font-sans text-emerald-600 mt-0.5">
+                  ID: {supply.id.slice(-8).toUpperCase()}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-sans text-emerald-600 uppercase tracking-wider">Factura generada</p>
+                <p className="font-mono font-bold text-emerald-800 text-sm">{supply.invoiceNumber}</p>
+              </div>
             </div>
             <div className="px-6 py-5 space-y-3.5">
               {[

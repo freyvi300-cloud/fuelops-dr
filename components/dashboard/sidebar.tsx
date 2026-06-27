@@ -3,21 +3,22 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  LayoutDashboard, Receipt, Users, Truck, Droplets,
-  CircleDollarSign, BarChart3, UserCog, Settings,
+  LayoutDashboard, Fuel, Users, Truck, Droplets,
+  Receipt, CircleDollarSign, BarChart3, UserCog, Settings,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/facturacion", label: "Facturación", icon: Receipt },
-  { href: "/clientes", label: "Clientes", icon: Users },
-  { href: "/camiones", label: "Camiones", icon: Truck },
-  { href: "/inventario", label: "Inventario", icon: Droplets },
-  { href: "/cobros", label: "Cobros", icon: CircleDollarSign },
-  { href: "/reportes", label: "Reportes", icon: BarChart3 },
-  { href: "/empleados", label: "Empleados", icon: UserCog },
-  { href: "/configuracion", label: "Configuración", icon: Settings },
+  { href: "/",             label: "Dashboard",            icon: LayoutDashboard, primary: false },
+  { href: "/suministro",   label: "Registrar suministro", icon: Fuel,            primary: true  },
+  { href: "/clientes",     label: "Clientes",             icon: Users,           primary: false },
+  { href: "/camiones",     label: "Camiones / Equipos",   icon: Truck,           primary: false },
+  { href: "/inventario",   label: "Inventario",           icon: Droplets,        primary: false },
+  { href: "/facturas",     label: "Facturas",             icon: Receipt,         primary: false },
+  { href: "/cobros",       label: "Cobros",               icon: CircleDollarSign,primary: false },
+  { href: "/reportes",     label: "Reportes",             icon: BarChart3,       primary: false },
+  { href: "/empleados",    label: "Empleados",            icon: UserCog,         primary: false },
+  { href: "/configuracion",label: "Configuración",        icon: Settings,        primary: false },
 ]
 
 export default function Sidebar() {
@@ -40,8 +41,28 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon, primary }) => {
           const active = pathname === href
+
+          // Primary item (Registrar suministro) gets a special treatment
+          if (primary) {
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all",
+                  active
+                    ? "bg-white text-[#1a3fa0] shadow-sm"
+                    : "bg-white/20 text-white hover:bg-white/30"
+                )}
+              >
+                <Icon className={cn("w-4 h-4 shrink-0", active ? "text-[#1a3fa0]" : "text-white")} />
+                {label}
+              </Link>
+            )
+          }
+
           return (
             <Link
               key={href}

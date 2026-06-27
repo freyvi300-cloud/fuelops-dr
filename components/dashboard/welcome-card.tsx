@@ -1,4 +1,5 @@
-import { Plus, Droplets } from "lucide-react"
+import Link from "next/link"
+import { Fuel, Users, Truck } from "lucide-react"
 
 export default function WelcomeCard() {
   return (
@@ -8,7 +9,7 @@ export default function WelcomeCard() {
     >
       {/* Icon */}
       <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-5">
-        <Droplets className="w-8 h-8 text-blue-600" />
+        <Fuel className="w-8 h-8 text-blue-600" />
       </div>
 
       {/* Text */}
@@ -16,20 +17,37 @@ export default function WelcomeCard() {
         Bienvenido a FuelOps-DR
       </h2>
       <p className="text-sm font-sans text-slate-500 max-w-md leading-relaxed mb-7">
-        Comienza registrando tu primer suministro de combustible
-        para empezar a generar estadísticas.
+        Registra tu primer suministro de combustible para comenzar
+        a generar estadísticas y gestionar tu negocio.
       </p>
 
-      {/* CTA */}
-      <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-sm px-7 py-3 rounded-xl transition-colors shadow-sm shadow-blue-200">
-        <Plus className="w-5 h-5" />
-        Registrar primer suministro
-      </button>
+      {/* Primary CTA */}
+      <Link
+        href="/suministro"
+        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-sm px-7 py-3 rounded-xl transition-colors shadow-sm shadow-blue-200"
+      >
+        <Fuel className="w-5 h-5" />
+        Nuevo suministro
+      </Link>
 
-      {/* Hint */}
-      <p className="text-[11px] font-sans text-slate-400 mt-4">
-        También puedes comenzar agregando clientes o camiones desde el menú lateral.
-      </p>
+      {/* Secondary actions */}
+      <div className="flex items-center gap-6 mt-5">
+        <Link
+          href="/clientes"
+          className="flex items-center gap-1.5 text-xs font-sans font-medium text-slate-500 hover:text-blue-600 transition-colors"
+        >
+          <Users className="w-3.5 h-3.5" />
+          Agregar cliente
+        </Link>
+        <span className="text-slate-200">·</span>
+        <Link
+          href="/camiones"
+          className="flex items-center gap-1.5 text-xs font-sans font-medium text-slate-500 hover:text-blue-600 transition-colors"
+        >
+          <Truck className="w-3.5 h-3.5" />
+          Registrar camión
+        </Link>
+      </div>
     </div>
   )
 }

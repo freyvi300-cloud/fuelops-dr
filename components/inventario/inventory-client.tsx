@@ -1,0 +1,611 @@
+"use client"
+
+import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import {
+  Droplets, Plus, Bell, ChevronDown, TrendingUp,
+  TrendingDown, Clock, X, AlertCircle, ChevronLeft,
+  ChevronRight, Fuel, Wrench, Search,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import type { SerializedMovement, MovementFormData, InventoryStats } from "@/app/actions/inventory"
+import { createMovement } from "@/app/actions/inventory"
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ITEMS_PER_PAGE = 10
+
+const MOVEMENT_CONFIG = {
+  IN: {
+    label:   "Entrada",
+    badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-100",
+    dotCls:   "bg-emerald-500",
+    signCls:  "text-emerald-600",
+    sign:     "+",
+  },
+  OUT: {
+    label:    "Salida",
+    badgeCls: "bg-red-50 text-red-600 border-red-100",
+    dotCls:   "bg-red-500",
+    signCls:  "text-red-600",
+    sign:     "-",
+  },
+  ADJUSTMENT: {
+    label:    "Ajuste",
+    badgeCls: "bg-amber-50 text-amber-700 border-amber-100",
+    dotCls:   "bg-amber-500",
+    signCls:  "text-amber-600",
+    sign:     "±",
+  },
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtGal(n: number, decimals = 2) {
+  return `${Math.abs(n).toLocaleString("es-DO", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} gal`
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("es-DO", {
+    day: "2-digit", month: "short", year: "numeric",
+  })
+}
+
+function fmtDatetime(iso: string) {
+  return new Date(iso).toLocaleString("es-DO", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  })
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
+}
+
+// ─── KPI card ─────────────────────────────────────────────────────────────────
+
+function KpiCard({
+  icon: Icon, iconBg, iconColor, label, value, sub, highlight,
+}: {
+  icon: React.ElementType; iconBg: string; iconColor: string
+  label: string; value: string; sub?: React.ReactNode; highlight?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border p-5 flex items-center gap-4",
+        highlight
+          ? "bg-[#1a3fa0] border-blue-700"
+          : "bg-white border-slate-100"
+      )}
+      style={{ boxShadow: "var(--shadow-card)" }}
+    >
+      <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
+        <Icon className={cn("w-6 h-6", iconColor)} />
+      </div>
+      <div className="min-w-0">
+        <p className={cn("text-[10px] font-semibold uppercase tracking-wider",
+          highlight ? "text-blue-200" : "text-slate-500")}>
+          {label}
+        </p>
+        <p className={cn("text-xl font-bold font-display tracking-tight mt-0.5 leading-tight",
+          highlight ? "text-white" : "text-slate-900")}>
+          {value}
+        </p>
+        {sub && <div className="mt-1">{sub}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Movement type badge ──────────────────────────────────────────────────────
+
+function TypeBadge({ type }: { type: string }) {
+  const cfg = MOVEMENT_CONFIG[type as keyof typeof MOVEMENT_CONFIG]
+  if (!cfg) return null
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border",
+      cfg.badgeCls
+    )}>
+      <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dotCls)} />
+      {cfg.label}
+    </span>
+  )
+}
+
+// ─── Form ─────────────────────────────────────────────────────────────────────
+
+const INPUT = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-sans text-slate-800 placeholder:text-slate-400 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+const LABEL = "block text-xs font-medium text-slate-600 mb-1.5"
+const SELECT = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-sans text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all cursor-pointer"
+
+const MOVEMENT_OPTIONS = [
+  { value: "IN",         label: "Entrada de combustible",    hint: "Registrar combustible recibido del proveedor" },
+  { value: "ADJUSTMENT", label: "Ajuste de inventario",      hint: "Corregir diferencias del medidor (puede ser negativo)" },
+]
+
+function MovementForm({
+  onSubmit, onCancel, isPending, error,
+}: {
+  onSubmit: (d: MovementFormData) => void
+  onCancel: () => void
+  isPending: boolean
+  error: string | null
+}) {
+  const [type, setType] = useState<"IN" | "ADJUSTMENT">("IN")
+  const isAdjustment = type === "ADJUSTMENT"
+
+  function handle(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    const gallonsRaw = parseFloat(fd.get("gallons") as string)
+    const cost       = parseFloat(fd.get("costPerGallon") as string)
+    onSubmit({
+      type:          fd.get("type") as "IN" | "ADJUSTMENT",
+      gallons:       gallonsRaw,
+      costPerGallon: !isNaN(cost) && cost > 0 ? cost : null,
+      reference:     (fd.get("reference") as string) || null,
+      description:   (fd.get("description") as string) || null,
+      movedAt:       fd.get("movedAt") as string,
+    })
+  }
+
+  return (
+    <form onSubmit={handle} className="space-y-4">
+      {error && (
+        <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
+          <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <p className="text-xs font-sans text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* Tipo */}
+      <div>
+        <label className={LABEL}>Tipo de movimiento</label>
+        <div className="grid grid-cols-2 gap-3">
+          {MOVEMENT_OPTIONS.map(opt => (
+            <button key={opt.value} type="button"
+              onClick={() => setType(opt.value as "IN" | "ADJUSTMENT")}
+              className={cn(
+                "flex flex-col items-start gap-1 p-3 rounded-xl border-2 text-left transition-all",
+                type === opt.value
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              )}
+            >
+              <span className={cn("text-xs font-bold",
+                type === opt.value ? "text-blue-700" : "text-slate-700")}>{opt.label}</span>
+              <span className="text-[10px] font-sans text-slate-400 leading-snug">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
+        <input type="hidden" name="type" value={type} />
+      </div>
+
+      {/* Fecha + Galones */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className={LABEL}>Fecha del movimiento</label>
+          <input name="movedAt" type="datetime-local" defaultValue={todayISO()}
+            required className={INPUT} />
+        </div>
+        <div>
+          <label className={LABEL}>
+            Galones
+            {isAdjustment && <span className="ml-1 text-amber-600 font-normal">(puede ser negativo)</span>}
+            <span className="text-red-500 ml-0.5">*</span>
+          </label>
+          <input name="gallons" type="number" step="0.01"
+            min={isAdjustment ? undefined : "0.01"}
+            placeholder={isAdjustment ? "ej: -50 o +200" : "0.00"}
+            required className={cn(INPUT, "text-right font-semibold")}
+          />
+        </div>
+      </div>
+
+      {/* Precio por galón (solo IN) */}
+      {!isAdjustment && (
+        <div>
+          <label className={LABEL}>Precio de compra / galón (RD$) <span className="text-slate-400 font-normal">— opcional</span></label>
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">RD$</span>
+            <input name="costPerGallon" type="number" min="0" step="0.01"
+              placeholder="0.00"
+              className={cn(INPUT, "pl-12 text-right font-semibold")}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Referencia */}
+      <div>
+        <label className={LABEL}>Referencia <span className="text-slate-400 font-normal">— # factura proveedor, nota interna</span></label>
+        <input name="reference" type="text"
+          placeholder={isAdjustment ? "Motivo del ajuste" : "Factura #001 / Proveedor XYZ"}
+          className={INPUT}
+        />
+      </div>
+
+      {/* Descripción */}
+      <div>
+        <label className={LABEL}>Nota adicional <span className="text-slate-400 font-normal">— opcional</span></label>
+        <textarea name="description" rows={2}
+          placeholder="Observaciones del movimiento..."
+          className={cn(INPUT, "resize-none")}
+        />
+      </div>
+
+      {/* Buttons */}
+      <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+        <button type="button" onClick={onCancel}
+          className="px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">
+          Cancelar
+        </button>
+        <button type="submit" disabled={isPending}
+          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors">
+          {isPending ? "Registrando..." : "Registrar movimiento"}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+interface Props {
+  movements: SerializedMovement[]
+  stats: InventoryStats
+}
+
+export default function InventoryClient({ movements, stats }: Props) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [modalOpen, setModalOpen] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [search, setSearch] = useState("")
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "IN" | "OUT" | "ADJUSTMENT">("ALL")
+  const [page, setPage] = useState(1)
+
+  // ── Filtering ──────────────────────────────────────────────────────────────
+  const q = search.toLowerCase().trim()
+  const filtered = movements.filter(m => {
+    const matchesSearch = !q || [m.reference ?? "", m.description ?? ""]
+      .some(v => v.toLowerCase().includes(q))
+    const matchesType = typeFilter === "ALL" || m.type === typeFilter
+    return matchesSearch && matchesType
+  })
+
+  // ── Pagination ─────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE))
+  const safePage   = Math.min(page, totalPages)
+  const paginated  = filtered.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE)
+
+  function handleSubmit(data: MovementFormData) {
+    setFormError(null)
+    startTransition(async () => {
+      try {
+        await createMovement(data)
+        setModalOpen(false)
+        router.refresh()
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : "Error al registrar el movimiento.")
+      }
+    })
+  }
+
+  const lastMov = stats.lastMovement
+  const lastMovCfg = lastMov ? MOVEMENT_CONFIG[lastMov.type as keyof typeof MOVEMENT_CONFIG] : null
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+
+      {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
+      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+        style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
+        <div className="flex items-start gap-4">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Inventario</h1>
+            <p className="text-xs font-sans text-slate-400 mt-0.5">
+              Control del combustible disponible y movimientos del tanque.
+            </p>
+          </div>
+
+          <div className="relative hidden xl:block w-52">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input type="text" placeholder="Buscar referencia..."
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+            />
+          </div>
+
+          <button className="relative p-2 hover:bg-slate-50 rounded-xl transition-colors shrink-0">
+            <Bell className="w-5 h-5 text-slate-500" />
+            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center font-bold">3</span>
+          </button>
+
+          <button className="flex items-center gap-2 hover:bg-slate-50 rounded-xl px-2.5 py-2 transition-colors shrink-0">
+            <div className="w-8 h-8 bg-[#1a3fa0] rounded-full flex items-center justify-center">
+              <span className="text-white text-sm font-bold">A</span>
+            </div>
+            <span className="text-sm font-semibold text-slate-800 hidden lg:block">Administrador</span>
+            <ChevronDown className="w-4 h-4 text-slate-400 hidden lg:block" />
+          </button>
+
+          <button onClick={() => { setFormError(null); setModalOpen(true) }}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors shadow-sm shadow-blue-200 shrink-0">
+            <Plus className="w-4 h-4" />
+            Registrar entrada
+          </button>
+        </div>
+      </div>
+
+      {/* ══ BODY ═════════════════════════════════════════════════════════════ */}
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+        {/* ── KPI Cards ──────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* Combustible disponible — highlighted card */}
+          <KpiCard
+            icon={Droplets}
+            iconBg="bg-white/20"
+            iconColor="text-white"
+            label="Combustible disponible"
+            value={fmtGal(Math.max(0, stats.availableGallons))}
+            highlight
+            sub={
+              <p className="text-[11px] font-sans text-blue-200">
+                Nivel actual del tanque
+              </p>
+            }
+          />
+
+          <KpiCard
+            icon={TrendingUp}
+            iconBg="bg-emerald-50"
+            iconColor="text-emerald-600"
+            label="Recibido este mes"
+            value={fmtGal(stats.receivedThisMonth)}
+            sub={<p className="text-[11px] font-sans text-slate-400">Entradas acumuladas</p>}
+          />
+
+          <KpiCard
+            icon={TrendingDown}
+            iconBg="bg-red-50"
+            iconColor="text-red-500"
+            label="Vendido este mes"
+            value={fmtGal(stats.soldThisMonth)}
+            sub={<p className="text-[11px] font-sans text-slate-400">Salidas acumuladas</p>}
+          />
+
+          <KpiCard
+            icon={Clock}
+            iconBg="bg-amber-50"
+            iconColor="text-amber-500"
+            label="Último movimiento"
+            value={lastMov ? fmtDate(lastMov.movedAt) : "—"}
+            sub={
+              lastMov && lastMovCfg ? (
+                <p className={cn("text-[11px] font-sans font-semibold", lastMovCfg.signCls)}>
+                  {lastMovCfg.sign}{fmtGal(lastMov.gallons)} · {lastMovCfg.label}
+                </p>
+              ) : (
+                <p className="text-[11px] font-sans text-slate-400">Sin movimientos</p>
+              )
+            }
+          />
+        </div>
+
+        {/* ── Filter bar ─────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input type="text" value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              placeholder="Buscar por referencia o descripción..."
+              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              style={{ boxShadow: "var(--shadow-card)" }}
+            />
+          </div>
+
+          {/* Type filter chips */}
+          <div className="flex items-center gap-2">
+            {([
+              { value: "ALL",        label: "Todos"   },
+              { value: "IN",         label: "Entradas" },
+              { value: "OUT",        label: "Salidas"  },
+              { value: "ADJUSTMENT", label: "Ajustes"  },
+            ] as const).map(opt => (
+              <button key={opt.value}
+                onClick={() => { setTypeFilter(opt.value); setPage(1) }}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border",
+                  typeFilter === opt.value
+                    ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                )}
+                style={{ boxShadow: typeFilter === opt.value ? undefined : "var(--shadow-card)" }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Table / Empty state ─────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
+          style={{ boxShadow: "var(--shadow-card)" }}>
+
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3">
+              <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center">
+                <Fuel className="w-7 h-7 text-slate-300" />
+              </div>
+              <p className="font-semibold text-slate-700 text-sm">
+                {movements.length === 0 ? "No hay movimientos registrados" : "Sin resultados para este filtro"}
+              </p>
+              <p className="text-xs font-sans text-slate-400 text-center max-w-xs leading-relaxed">
+                {movements.length === 0
+                  ? "Registra la primera entrada de combustible para comenzar a controlar el inventario."
+                  : "Prueba con otros términos o cambia el filtro de tipo."}
+              </p>
+              {movements.length === 0 && (
+                <button onClick={() => setModalOpen(true)}
+                  className="mt-2 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                  <Plus className="w-4 h-4" />
+                  Registrar primera entrada
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full font-sans text-sm min-w-[700px]">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50/70">
+                      {[
+                        { label: "FECHA",         cls: "text-left pl-5 pr-4" },
+                        { label: "TIPO",           cls: "text-left px-4" },
+                        { label: "GALONES",        cls: "text-right px-4" },
+                        { label: "REFERENCIA",     cls: "text-left px-4" },
+                        { label: "PRECIO / GAL",   cls: "text-right px-4" },
+                        { label: "ACCIONES",       cls: "text-center px-5 w-16" },
+                      ].map(h => (
+                        <th key={h.label}
+                          className={cn("text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3.5", h.cls)}>
+                          {h.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {paginated.map(m => {
+                      const cfg = MOVEMENT_CONFIG[m.type as keyof typeof MOVEMENT_CONFIG]
+                      const isOut = m.type === "OUT"
+                      const displayGallons = isOut ? -m.gallons : m.gallons
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                          {/* Fecha */}
+                          <td className="pl-5 pr-4 py-4">
+                            <p className="font-medium text-slate-800">{fmtDate(m.movedAt)}</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5 font-sans">
+                              {new Date(m.movedAt).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          </td>
+
+                          {/* Tipo */}
+                          <td className="px-4 py-4"><TypeBadge type={m.type} /></td>
+
+                          {/* Galones */}
+                          <td className="px-4 py-4 text-right">
+                            <span className={cn("font-bold tabular-nums", cfg?.signCls ?? "text-slate-700")}>
+                              {displayGallons >= 0 ? "+" : ""}
+                              {displayGallons.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gal
+                            </span>
+                          </td>
+
+                          {/* Referencia / descripción */}
+                          <td className="px-4 py-4 max-w-[220px]">
+                            {m.reference && (
+                              <p className="font-medium text-slate-700 truncate">{m.reference}</p>
+                            )}
+                            {m.description && (
+                              <p className="text-[11px] font-sans text-slate-400 truncate mt-0.5">{m.description}</p>
+                            )}
+                            {!m.reference && !m.description && (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+
+                          {/* Precio / gal */}
+                          <td className="px-4 py-4 text-right font-sans">
+                            {m.costPerGallon != null
+                              ? <span className="font-medium text-slate-700">
+                                  RD${m.costPerGallon.toLocaleString("es-DO", { minimumFractionDigits: 2 })}
+                                </span>
+                              : <span className="text-slate-300">—</span>
+                            }
+                          </td>
+
+                          {/* Acciones */}
+                          <td className="px-5 py-4 text-center">
+                            <button
+                              title="Ver detalles"
+                              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                            >
+                              <Wrench className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 bg-slate-50/50">
+                <p className="text-xs font-sans text-slate-500">
+                  Mostrando{" "}
+                  <span className="font-semibold text-slate-700">{(safePage - 1) * ITEMS_PER_PAGE + 1}</span>
+                  {" "}a{" "}
+                  <span className="font-semibold text-slate-700">{Math.min(safePage * ITEMS_PER_PAGE, filtered.length)}</span>
+                  {" "}de{" "}
+                  <span className="font-semibold text-slate-700">{filtered.length}</span> movimientos
+                </p>
+
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
+                      <button key={n} onClick={() => setPage(n)}
+                        className={cn("w-8 h-8 flex items-center justify-center rounded-lg text-xs font-semibold transition-colors",
+                          n === safePage ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-100")}>
+                        {n}
+                      </button>
+                    ))}
+                    <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ══ MODAL ════════════════════════════════════════════════════════════ */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setModalOpen(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl z-10">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 tracking-tight">Registrar movimiento</h2>
+                <p className="text-[11px] font-sans text-slate-400 mt-0.5">
+                  Las salidas se generan automáticamente al confirmar suministros.
+                </p>
+              </div>
+              <button onClick={() => setModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-5">
+              <MovementForm
+                onSubmit={handleSubmit}
+                onCancel={() => setModalOpen(false)}
+                isPending={isPending}
+                error={formError}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

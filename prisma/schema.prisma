@@ -124,3 +124,22 @@ enum TruckStatus {
   ACTIVE
   INACTIVE
 }
+
+// ─── Inventory Movements ──────────────────────────────────────────────────────
+
+model InventoryMovement {
+  id            String       @id @default(cuid())
+  gallons       Decimal      @db.Decimal(10, 2) // positive for IN, negative allowed for ADJUSTMENT
+  type          MovementType
+  description   String?
+  reference     String?
+  costPerGallon Decimal?     @db.Decimal(10, 4) // purchase cost per gallon (IN only)
+  movedAt       DateTime     @default(now())    // when the movement happened (user-set)
+  createdAt     DateTime     @default(now())    // when it was recorded in the system
+}
+
+enum MovementType {
+  IN          // Fuel received from supplier
+  OUT         // Fuel dispatched (auto-created when supply confirmed)
+  ADJUSTMENT  // Manual stock correction (admin only)
+}

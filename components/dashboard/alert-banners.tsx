@@ -40,7 +40,10 @@ const alertConfig: Record<AlertType, {
   },
 }
 
+// Returns null when there are no alerts — nothing renders in the layout
 export default function AlertBanners({ alerts }: AlertBannersProps) {
+  if (alerts.length === 0) return null
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
       {alerts.map((alert) => {

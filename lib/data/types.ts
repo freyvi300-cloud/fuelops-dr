@@ -12,6 +12,7 @@ export interface Kpi {
   trendUp?: boolean
   progress?: number
   progressLabel?: string
+  emptyMessage: string
 }
 
 export interface SalePoint {

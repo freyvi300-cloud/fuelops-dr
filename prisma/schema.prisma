@@ -86,9 +86,41 @@ model Customer {
   notes              String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
+
+  trucks Truck[]
 }
 
 enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ─── Trucks / Equipment ───────────────────────────────────────────────────────
+
+model Truck {
+  id         String      @id @default(cuid())
+  customerId String
+  code       String      @unique
+  name       String
+  plate      String?
+  type       TruckType   @default(TRUCK)
+  status     TruckStatus @default(ACTIVE)
+  notes      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id])
+}
+
+enum TruckType {
+  TRUCK
+  TRAILER
+  EQUIPMENT
+  GENERATOR
+  OTHER
+}
+
+enum TruckStatus {
   ACTIVE
   INACTIVE
 }

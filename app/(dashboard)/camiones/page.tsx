@@ -1,22 +1,29 @@
-import { Truck } from "lucide-react"
-import PageShell from "@/components/ui/page-shell"
+import { getTrucks, getTruckStats, getNextTruckCode } from "@/app/actions/trucks"
+import { getCustomers } from "@/app/actions/customers"
+import TrucksClient from "@/components/camiones/trucks-client"
 
-// TODO: Build Trucks/Equipment module
-// - Truck model: plate, description, customerId, fuelType, photoUrl, isActive
-// - Link trucks to customers (Customer → Trucks 1:N)
-// - Truck selector in /suministro will pull from this module
-// - Support quick-add inline from /suministro form
+export const dynamic = "force-dynamic"
 
-export default function CamionesPage() {
+export default async function CamionesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>
+}) {
+  const { q } = await searchParams
+  const [trucks, stats, customers, nextCode] = await Promise.all([
+    getTrucks(q),
+    getTruckStats(),
+    getCustomers(),      // active + inactive customers for the form selector
+    getNextTruckCode(),
+  ])
+
   return (
-    <PageShell
-      title="Camiones / Equipos"
-      description="Gestiona los vehículos y equipos que reciben combustible."
-      actionLabel="Registrar camión"
-      icon={Truck}
-      emptyIcon={Truck}
-      emptyTitle="No hay camiones registrados"
-      emptyDescription="Registra el primer vehículo para asociarlo a un cliente y comenzar a registrar suministros por placa."
+    <TrucksClient
+      trucks={trucks}
+      stats={stats}
+      customers={customers}
+      nextCode={nextCode}
+      initialSearch={q ?? ""}
     />
   )
 }

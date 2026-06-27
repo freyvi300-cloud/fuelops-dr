@@ -1,33 +1,33 @@
 import Link from "next/link"
 import { Building2 } from "lucide-react"
+import type { PendingClient } from "@/lib/data/types"
 
-const pendientes = [
-  { nombre: "Constructora R & H", monto: "RD$25,000.00", dias: 15 },
-  { nombre: "Agroservicios Ruiz", monto: "RD$18,500.00", dias: 8 },
-  { nombre: "Transporte Madera SRL", monto: "RD$15,000.00", dias: 5 },
-  { nombre: "Inversiones Beta", monto: "RD$12,500.00", dias: 3 },
-  { nombre: "Servicios Generales J&J", monto: "RD$11,000.00", dias: 2 },
-]
+interface PendingClientsProps {
+  clients: PendingClient[]
+}
 
-export default function PendingClients() {
+export default function PendingClients({ clients }: PendingClientsProps) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-slate-800">Clientes con pagos pendientes</h3>
-        <Link href="/cobros" className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+    <div
+      className="bg-white rounded-2xl border border-slate-100 p-6"
+      style={{ boxShadow: "var(--shadow-card)" }}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="font-bold text-slate-800 text-[15px] tracking-tight">Clientes con pagos pendientes</h3>
+        <Link href="/cobros" className="text-xs font-sans text-blue-600 hover:text-blue-700 font-medium transition-colors">
           Ver todas
         </Link>
       </div>
 
-      <div className="space-y-3">
-        {pendientes.map((c) => (
+      <div className="space-y-3.5">
+        {clients.map((c) => (
           <div key={c.nombre} className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4 text-blue-600" />
+            <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
+              <Building2 className="w-4.5 h-4.5 text-blue-600" style={{ width: "18px", height: "18px" }} />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-slate-800 truncate">{c.nombre}</p>
-              <p className="text-[11px] text-slate-400">{c.dias} días vencido</p>
+              <p className="text-[11px] font-sans text-slate-400 mt-0.5">{c.dias} días vencido</p>
             </div>
             <div className="text-right shrink-0">
               <p className="text-xs font-bold text-red-600">{c.monto}</p>
@@ -36,8 +36,8 @@ export default function PendingClients() {
         ))}
       </div>
 
-      <div className="mt-4 pt-3 border-t border-slate-100 text-center">
-        <Link href="/clientes" className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+      <div className="mt-5 pt-4 border-t border-slate-100 text-center">
+        <Link href="/clientes" className="text-xs font-sans text-blue-600 hover:text-blue-700 font-medium transition-colors">
           Ver todos los clientes →
         </Link>
       </div>

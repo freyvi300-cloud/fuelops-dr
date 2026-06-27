@@ -4,23 +4,23 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell,
 } from "recharts"
+import type { InventoryPoint } from "@/lib/data/types"
 
-const data = [
-  { date: "11 Jun", galones: 15000 },
-  { date: "12 Jun", galones: 16000 },
-  { date: "13 Jun", galones: 15500 },
-  { date: "14 Jun", galones: 15800 },
-  { date: "15 Jun", galones: 15200 },
-  { date: "16 Jun", galones: 14800 },
-  { date: "17 Jun", galones: 14250 },
-]
+interface InventoryChartProps {
+  data: InventoryPoint[]
+}
 
-export default function InventoryChart() {
+export default function InventoryChart({ data }: InventoryChartProps) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
-      <div className="flex items-center justify-between mb-5">
-        <h3 className="font-semibold text-slate-800">Nivel de inventario de combustible</h3>
-        <select className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+    <div
+      className="bg-white rounded-2xl border border-slate-100 p-6"
+      style={{ boxShadow: "var(--shadow-card)" }}
+    >
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="font-bold text-slate-800 text-[15px] tracking-tight">
+          Nivel de inventario de combustible
+        </h3>
+        <select className="text-xs font-sans border border-slate-200 rounded-xl px-3 py-1.5 text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer">
           <option>Galones</option>
         </select>
       </div>
@@ -29,14 +29,14 @@ export default function InventoryChart() {
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 11, fill: "#94a3b8" }}
+            tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "var(--font-inter)" }}
             axisLine={false}
             tickLine={false}
             dy={6}
           />
           <YAxis
             tickFormatter={(v) => `${(v / 1000).toFixed(0)},000`}
-            tick={{ fontSize: 11, fill: "#94a3b8" }}
+            tick={{ fontSize: 11, fill: "#94a3b8", fontFamily: "var(--font-inter)" }}
             axisLine={false}
             tickLine={false}
             domain={[0, 20000]}
@@ -45,14 +45,15 @@ export default function InventoryChart() {
           <Tooltip
             formatter={(value) => [`${Number(value).toLocaleString("es-DO")} gal`, "Inventario"]}
             contentStyle={{
-              borderRadius: "12px",
+              borderRadius: "14px",
               border: "1px solid #e2e8f0",
-              boxShadow: "0 4px 16px -2px rgb(0 0 0 / 0.1)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
               fontSize: "12px",
+              fontFamily: "var(--font-inter)",
             }}
             cursor={{ fill: "#f8fafc" }}
           />
-          <Bar dataKey="galones" radius={[5, 5, 0, 0]} maxBarSize={40}>
+          <Bar dataKey="galones" radius={[6, 6, 0, 0]} maxBarSize={40}>
             {data.map((_, i) => (
               <Cell
                 key={i}

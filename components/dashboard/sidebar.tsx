@@ -42,7 +42,7 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon, primary }) => {
-          const active = pathname === href
+          const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`)
 
           // Primary item (Registrar suministro) gets a special treatment
           if (primary) {

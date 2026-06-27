@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
 import { MovementType } from "@prisma/client"
+import { computeInventoryBalance } from "@/lib/inventory-utils"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -38,22 +39,7 @@ export interface InventoryStats {
   } | null
 }
 
-// ─── Balance computation ──────────────────────────────────────────────────────
-
-/**
- * IN  → adds gallons to stock
- * OUT → removes gallons from stock
- * ADJUSTMENT → adds signed gallons (can be negative to correct downward)
- */
-function computeBalance(rows: { type: string; gallons: { toNumber(): number } }[]): number {
-  return rows.reduce((sum, m) => {
-    const g = m.gallons.toNumber()
-    if (m.type === "IN")  return sum + g
-    if (m.type === "OUT") return sum - g
-    if (m.type === "ADJUSTMENT") return sum + g  // stored with sign
-    return sum
-  }, 0)
-}
+// computeBalance is now in lib/inventory-utils.ts (shared with supplies.ts)
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
@@ -89,7 +75,7 @@ export async function getInventoryStats(): Promise<InventoryStats> {
     }),
   ])
 
-  const availableGallons   = computeBalance(allRows)
+  const availableGallons   = computeInventoryBalance(allRows)
   const receivedThisMonth  = monthRows.filter(r => r.type === "IN").reduce((s, r) => s + r.gallons.toNumber(), 0)
   const soldThisMonth      = monthRows.filter(r => r.type === "OUT").reduce((s, r) => s + r.gallons.toNumber(), 0)
 
@@ -110,7 +96,7 @@ export async function getInventoryStats(): Promise<InventoryStats> {
 
 export async function getCurrentBalance(): Promise<number> {
   const rows = await prisma.inventoryMovement.findMany({ select: { type: true, gallons: true } })
-  return computeBalance(rows)
+  return computeInventoryBalance(rows)
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────

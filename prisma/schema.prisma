@@ -8,7 +8,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ─── Auth (NextAuth / Auth.js required tables) ───────────────────────────────
+// ─── Auth ─────────────────────────────────────────────────────────────────────
 
 model Account {
   id                String  @id @default(cuid())
@@ -72,18 +72,20 @@ enum Role {
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 model Customer {
-  id             String         @id @default(cuid())
-  name           String
-  phone          String?
-  email          String?
-  address        String?
-  rnc            String?
-  creditLimit    Decimal        @default(0) @db.Decimal(12, 2)
-  currentBalance Decimal        @default(0) @db.Decimal(12, 2)
-  status         CustomerStatus @default(ACTIVE)
-  notes          String?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id                 String         @id @default(cuid())
+  name               String
+  phone              String?
+  email              String?
+  address            String?
+  rnc                String?
+  creditLimit        Decimal        @default(0) @db.Decimal(12, 2)
+  currentBalance     Decimal        @default(0) @db.Decimal(12, 2)
+  pendingGallons     Decimal        @default(0) @db.Decimal(10, 2)
+  fuelPricePerGallon Decimal        @default(0) @db.Decimal(10, 4)
+  status             CustomerStatus @default(ACTIVE)
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 }
 
 enum CustomerStatus {

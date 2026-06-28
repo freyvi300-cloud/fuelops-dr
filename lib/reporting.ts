@@ -8,9 +8,10 @@
  * If a new view needs data, add a function here and call it.
  */
 
-import { prisma }                    from "@/lib/prisma"
-import { computeInventoryBalance }   from "@/lib/inventory-utils"
-import { InvoiceStatus }             from "@prisma/client"
+import { prisma }                               from "@/lib/prisma"
+import { computeInventoryBalance }             from "@/lib/inventory-utils"
+import { InvoiceStatus }                       from "@prisma/client"
+import { getSystemSettings, type SystemSettings } from "@/lib/system-settings"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DATE UTILITIES
@@ -512,8 +513,8 @@ export async function getInventoryOverTime(range: DateRange): Promise<DailyPoint
 // DASHBOARD 2.0 — TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Default tank capacity. TODO Phase 2: read from SystemSettings model */
-const DEFAULT_TANK_CAPACITY = 20_000 // gallons
+// Tank capacity and alert thresholds now come from SystemSettings (lib/system-settings.ts).
+// No hardcoded values — admin configures them via /configuracion.
 
 export interface InventoryStatus {
   available:           number
@@ -579,13 +580,20 @@ export interface DashboardData {
 // DASHBOARD 2.0 — FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function getInventoryStatus(): Promise<InventoryStatus> {
+/**
+ * Pass `settings` when you already have them to avoid a second DB round-trip
+ * (e.g. inside buildDashboardData). Omit to fetch internally.
+ */
+export async function getInventoryStatus(
+  settings?: SystemSettings,
+): Promise<InventoryStatus> {
   const now        = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
   const daysElapsed = Math.max(1, now.getDate())
 
-  const [allMovements, todayOut, monthOut] = await Promise.all([
+  const [resolvedSettings, allMovements, todayOut, monthOut] = await Promise.all([
+    settings ? Promise.resolve(settings) : getSystemSettings(),
     prisma.inventoryMovement.findMany({ select: { type: true, gallons: true } }),
     prisma.inventoryMovement.aggregate({
       where: { type: "OUT", movedAt: { gte: todayStart } },
@@ -601,15 +609,16 @@ export async function getInventoryStatus(): Promise<InventoryStatus> {
   const consumedToday       = todayOut._sum.gallons?.toNumber()  ?? 0
   const consumedThisMonth   = monthOut._sum.gallons?.toNumber()  ?? 0
   const avgDailyConsumption = consumedThisMonth / daysElapsed
-  const percentage          = DEFAULT_TANK_CAPACITY > 0
-    ? Math.min(100, (available / DEFAULT_TANK_CAPACITY) * 100)
+  const tankCap             = resolvedSettings.tankCapacity
+  const percentage          = tankCap > 0
+    ? Math.min(100, (available / tankCap) * 100)
     : 0
   const estimatedDaysLeft   = avgDailyConsumption > 0
     ? Math.floor(available / avgDailyConsumption)
     : Infinity
 
   return {
-    available, tankCapacity: DEFAULT_TANK_CAPACITY, percentage,
+    available, tankCapacity: tankCap, percentage,
     consumedToday, consumedThisMonth, avgDailyConsumption, estimatedDaysLeft,
   }
 }
@@ -670,27 +679,38 @@ export async function getActivityFeed(limit = 20): Promise<ActivityItem[]> {
     .slice(0, limit)
 }
 
-/** Pure function — no DB queries. Call after fetching kpis + inventory. */
+/**
+ * Pure function — no DB queries.
+ * Alert thresholds come from SystemSettings, not hardcoded percentages.
+ *
+ *   inventory.available <= settings.alertRedGallons    → CRITICAL
+ *   inventory.available <= settings.alertYellowGallons → WARNING (low)
+ *   otherwise                                          → OK
+ */
 export function generateAlerts(
-  kpis: DashboardExtendedKPIs,
+  kpis:      DashboardExtendedKPIs,
   inventory: InventoryStatus,
+  settings:  Pick<SystemSettings, "alertRedGallons" | "alertYellowGallons">,
 ): Alert[] {
   const alerts: Alert[] = []
+  const gal = inventory.available
+  const days = inventory.estimatedDaysLeft
 
-  // CRITICAL: inventory < 15%
-  if (inventory.percentage < 15) {
-    const days = inventory.estimatedDaysLeft === Infinity ? "" : ` Estimado: ${inventory.estimatedDaysLeft} días restantes.`
+  // CRITICAL: at or below red threshold
+  if (gal <= settings.alertRedGallons) {
+    const autonomy = days === Infinity ? "" : ` Estimado: ${days} día${days !== 1 ? "s" : ""} restantes.`
     alerts.push({
       level:   "critical",
       title:   "Inventario crítico",
-      message: `Solo quedan ${inventory.available.toFixed(0)} gal (${inventory.percentage.toFixed(1)}% del tanque).${days}`,
+      message: `Solo quedan ${gal.toFixed(0)} gal — por debajo del mínimo configurado (${settings.alertRedGallons} gal).${autonomy}`,
       link:    "/inventario",
     })
-  } else if (inventory.percentage < 30) {
+  } else if (gal <= settings.alertYellowGallons) {
+    // WARNING: at or below yellow threshold
     alerts.push({
       level:   "warning",
       title:   "Inventario bajo",
-      message: `Combustible al ${inventory.percentage.toFixed(1)}%. Considera reabastecer pronto.`,
+      message: `Combustible en ${gal.toFixed(0)} gal — por debajo del nivel de alerta (${settings.alertYellowGallons} gal). Considera reabastecer.`,
       link:    "/inventario",
     })
   }
@@ -771,6 +791,10 @@ export async function buildDashboardData(): Promise<DashboardData> {
   }
   const monthRange = getDateRange("month")
 
+  // Fetch settings first — passed to getInventoryStatus() and generateAlerts()
+  // to avoid fetching the settings row more than once per request.
+  const settings = await getSystemSettings()
+
   const [
     kpis, inventory, activity,
     topCustomers, customerDebt, truckActivity,
@@ -778,7 +802,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
     pendingBalanceAgg,
   ] = await Promise.all([
     getDashboardKPIs(),
-    getInventoryStatus(),
+    getInventoryStatus(settings),   // pass settings — no second DB fetch
     getActivityFeed(20),
     getTopCustomers(monthRange, 10),
     getCustomerDebtReport(),
@@ -795,7 +819,7 @@ export async function buildDashboardData(): Promise<DashboardData> {
 
   const pendingBalance = pendingBalanceAgg._sum.balanceDue?.toNumber() ?? 0
   const extKpis: DashboardExtendedKPIs = { ...kpis, pendingBalance }
-  const alerts = generateAlerts(extKpis, inventory)
+  const alerts = generateAlerts(extKpis, inventory, settings)  // uses settings thresholds
 
   return {
     kpis:          extKpis,

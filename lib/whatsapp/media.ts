@@ -33,26 +33,43 @@ export async function uploadToSupabase(
   }
 
   const uploadUrl = `${url}/storage/v1/object/${BUCKET}/${path}`
-  console.log(`[Storage] Uploading ${buffer.length}B to ${BUCKET}/${path}`)
-
-  const res = await fetch(uploadUrl, {
-    method:  "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type":  mimeType,
-      "x-upsert":      "true",    // overwrite if same key exists
-    },
-    body: new Uint8Array(buffer),  // Buffer → Uint8Array for fetch BodyInit compat
-  })
-
-  if (!res.ok) {
-    const err = await res.text().catch(() => "unknown")
-    throw new Error(`Supabase Storage upload failed ${res.status}: ${err}`)
-  }
-
   const publicUrl = `${url}/storage/v1/object/public/${BUCKET}/${path}`
-  console.log(`[Storage] ✅ Uploaded: ${publicUrl}`)
-  return publicUrl
+
+  console.log(`[Storage/UP] Uploading ${buffer.length}B to ${BUCKET}/${path}`)
+  console.log(`[Storage/UP] Endpoint: POST ${url}/storage/v1/object/${BUCKET}/...`)
+  console.log(`[Storage/UP] SUPABASE_URL set: ${Boolean(url)} | SERVICE_KEY set: ${Boolean(key)} (${key.length} chars)`)
+
+  try {
+    const res = await fetch(uploadUrl, {
+      method:  "POST",
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Content-Type":  mimeType,
+        "x-upsert":      "true",
+      },
+      body: new Uint8Array(buffer),
+    })
+
+    console.log(`[Storage/UP] HTTP ${res.status} ${res.statusText}`)
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "(unreadable)")
+      console.error(`[Storage/UP] ❌ Response body: ${body}`)
+      throw new Error(`Supabase Storage HTTP ${res.status}: ${body.slice(0, 300)}`)
+    }
+
+    const responseBody = await res.text().catch(() => "")
+    console.log(`[Storage/UP] ✅ Success. Response: ${responseBody.slice(0, 200)}`)
+    console.log(`[Storage/UP] Public URL: ${publicUrl}`)
+    return publicUrl
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Storage/UP] ❌ FAILED`)
+    console.error(`[Storage/UP] message : ${e.message}`)
+    console.error(`[Storage/UP] cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
+    console.error(`[Storage/UP] stack   : ${e.stack ?? "no stack"}`)
+    throw e
+  }
 }
 
 // ─── DB persistence ───────────────────────────────────────────────────────────

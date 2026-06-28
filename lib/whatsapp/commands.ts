@@ -185,34 +185,71 @@ async function handleImageMessage(msg: IncomingMessage): Promise<void> {
 
 async function processImageAsync(msg: IncomingMessage): Promise<void> {
   const who = msg.senderName ?? msg.from
+  console.log(`[Nova/Image] ═══ processImageAsync START — from=${msg.from} mediaId=${msg.imageId} ═══`)
 
-  // Step 1: Download from Meta
-  console.log(`[Nova/Image] ${who} → Step 1: downloading mediaId=${msg.imageId}`)
-  const { buffer, mimeType, filename } = await downloadMedia(msg.imageId!)
-  console.log(`[Nova/Image] ${who} → Step 1 done: ${mimeType} ${buffer.length}B ${filename}`)
+  // ── Step 1: Download from Meta ─────────────────────────────────────────────
+  console.log(`[Nova/Image] ── STEP 1: Download from Meta CDN ──`)
+  let buffer: Buffer, mimeType: string, filename: string
 
-  // Step 2: Upload to Supabase Storage
+  try {
+    const dl = await downloadMedia(msg.imageId!)
+    buffer   = dl.buffer
+    mimeType = dl.mimeType
+    filename = dl.filename
+    console.log(`[Nova/Image] ── STEP 1 ✅ ${mimeType} ${buffer.length}B "${filename}"`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Nova/Image] ── STEP 1 ❌ Download FAILED`)
+    console.error(`[Nova/Image]    message : ${e.message}`)
+    console.error(`[Nova/Image]    cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
+    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
+    return   // stop here — upload and DB steps skipped
+  }
+
+  // ── Step 2: Upload to Supabase Storage ─────────────────────────────────────
   const storagePath = buildStoragePath(msg.from, filename)
-  console.log(`[Nova/Image] ${who} → Step 2: uploading to ${storagePath}`)
-  const storageUrl = await uploadToSupabase(buffer, mimeType, storagePath)
-  console.log(`[Nova/Image] ${who} → Step 2 done: ${storageUrl}`)
+  console.log(`[Nova/Image] ── STEP 2: Upload to Supabase Storage → "${storagePath}"`)
+  let storageUrl: string
 
-  // Step 3: Save metadata to DB
-  console.log(`[Nova/Image] ${who} → Step 3: saving to DB`)
-  await saveWhatsAppImageRecord({
-    mediaId:     msg.imageId!,
-    senderPhone: msg.from,
-    senderName:  msg.senderName,
-    storageUrl,
-    mimeType,
-    caption:     null,   // Phase 3.2: extract from raw payload
-  })
-  console.log(`[Nova/Image] ${who} → Step 3 done ✅ all steps complete`)
+  try {
+    storageUrl = await uploadToSupabase(buffer, mimeType, storagePath)
+    console.log(`[Nova/Image] ── STEP 2 ✅ ${storageUrl}`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Nova/Image] ── STEP 2 ❌ Supabase upload FAILED`)
+    console.error(`[Nova/Image]    message : ${e.message}`)
+    console.error(`[Nova/Image]    cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
+    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
+    return
+  }
 
-  // Phase 3.2 placeholder: run OCR here
+  // ── Step 3: Save metadata to DB ────────────────────────────────────────────
+  console.log(`[Nova/Image] ── STEP 3: Save to DB — mediaId=${msg.imageId}`)
+
+  try {
+    await saveWhatsAppImageRecord({
+      mediaId:     msg.imageId!,
+      senderPhone: msg.from,
+      senderName:  msg.senderName,
+      storageUrl,
+      mimeType,
+      caption:     null,
+    })
+    console.log(`[Nova/Image] ── STEP 3 ✅ DB record saved`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Nova/Image] ── STEP 3 ❌ DB save FAILED`)
+    console.error(`[Nova/Image]    message : ${e.message}`)
+    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
+    // Non-fatal: image is in storage, DB can be retried
+  }
+
+  console.log(`[Nova/Image] ═══ processImageAsync COMPLETE ═══`)
+
+  // Phase 3.2 placeholder: OCR + auto-register supply
   // const ocrResult = await analyzeMeterPhoto(buffer)
   // if (ocrResult.gallons && ocrResult.confidence >= MIN_CONFIDENCE) {
-  //   await sendTextMessage(msg.from, `⛽ Medidor detectado: ${ocrResult.gallons} gal (${ocrResult.confidence}% confianza)`)
+  //   await sendTextMessage(msg.from, `⛽ Medidor: ${ocrResult.gallons} gal (${ocrResult.confidence}%)`)
   // }
 }
 

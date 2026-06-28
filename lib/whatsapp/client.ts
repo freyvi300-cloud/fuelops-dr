@@ -90,40 +90,84 @@ export interface MediaDownload {
 
 /**
  * Downloads an image (or any media) from WhatsApp Cloud API.
- * Two-step: first GET /{mediaId} to get the CDN URL, then GET that URL.
- * Both requests require the Bearer token.
+ *
+ * Sub-step A: GET /v20.0/{mediaId}  → resolve CDN URL + mime type
+ * Sub-step B: GET {cdnUrl}          → download binary bytes
+ *
+ * Each sub-step has its own try/catch with full diagnostics.
  */
 export async function downloadMedia(mediaId: string): Promise<MediaDownload> {
   const { token } = credentials()
+  const resolveUrl = `${BASE}/${mediaId}`
 
-  // Step 1 — resolve media URL from media ID
-  console.log(`[WhatsApp] downloadMedia: resolving id=${mediaId}`)
-  const metaRes = await fetch(`${BASE}/${mediaId}`, {
-    headers: { "Authorization": `Bearer ${token}` },
-  })
-  if (!metaRes.ok) {
-    const err = await metaRes.text().catch(() => "unknown")
-    throw new Error(`WhatsApp media resolve ${metaRes.status}: ${err}`)
-  }
-  const meta = await metaRes.json() as {
-    url:       string
-    mime_type: string
-    file_size: number
-    sha256:    string
-    id:        string
-  }
-  console.log(`[WhatsApp] downloadMedia: mime=${meta.mime_type} size=${meta.file_size}B url=...`)
+  // ── Sub-step A: resolve media metadata ──────────────────────────────────────
+  console.log(`[WhatsApp/DL-A] Resolving mediaId=${mediaId}`)
+  console.log(`[WhatsApp/DL-A] Endpoint: GET graph.facebook.com/v20.0/${mediaId}`)
+  console.log(`[WhatsApp/DL-A] Token: ${token.slice(0, 12)}… (${token.length} chars)`)
 
-  // Step 2 — download the actual file from CDN
-  const imgRes = await fetch(meta.url, {
-    headers: { "Authorization": `Bearer ${token}` },
-  })
-  if (!imgRes.ok) {
-    throw new Error(`WhatsApp CDN download ${imgRes.status}`)
+  let meta: { url: string; mime_type: string; file_size: number; id: string }
+
+  try {
+    const res = await fetch(resolveUrl, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+
+    console.log(`[WhatsApp/DL-A] HTTP ${res.status} ${res.statusText}`)
+
+    const body = await res.text()
+    console.log(`[WhatsApp/DL-A] Response body: ${body.slice(0, 500)}`)
+
+    if (!res.ok) {
+      throw new Error(
+        `[WhatsApp/DL-A] Resolve failed — HTTP ${res.status}: ${body}`
+      )
+    }
+
+    meta = JSON.parse(body) as typeof meta
+    console.log(`[WhatsApp/DL-A] ✅ Resolved: mime=${meta.mime_type} size=${meta.file_size}B`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[WhatsApp/DL-A] ❌ FAILED`)
+    console.error(`[WhatsApp/DL-A] message : ${e.message}`)
+    console.error(`[WhatsApp/DL-A] cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
+    console.error(`[WhatsApp/DL-A] stack   : ${e.stack ?? "no stack"}`)
+    throw e
   }
-  const arrayBuffer = await imgRes.arrayBuffer()
-  const buffer      = Buffer.from(arrayBuffer)
-  console.log(`[WhatsApp] downloadMedia: downloaded ${buffer.length} bytes ✅`)
+
+  // ── Sub-step B: download binary from Meta CDN ────────────────────────────────
+  // CDN URL is ephemeral (~5 min). Also requires Bearer token.
+  const cdnHost = (() => { try { return new URL(meta.url).hostname } catch { return "unknown-host" } })()
+  console.log(`[WhatsApp/DL-B] Downloading from CDN host: ${cdnHost}`)
+
+  let buffer: Buffer
+
+  try {
+    const res = await fetch(meta.url, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+
+    console.log(`[WhatsApp/DL-B] HTTP ${res.status} ${res.statusText}`)
+    console.log(`[WhatsApp/DL-B] Content-Type: ${res.headers.get("content-type") ?? "unknown"}`)
+    console.log(`[WhatsApp/DL-B] Content-Length: ${res.headers.get("content-length") ?? "unknown"}`)
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "(unreadable)")
+      throw new Error(
+        `[WhatsApp/DL-B] CDN download failed — HTTP ${res.status}: ${body.slice(0, 200)}`
+      )
+    }
+
+    const ab = await res.arrayBuffer()
+    buffer   = Buffer.from(ab)
+    console.log(`[WhatsApp/DL-B] ✅ Downloaded ${buffer.length} bytes`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[WhatsApp/DL-B] ❌ FAILED`)
+    console.error(`[WhatsApp/DL-B] message : ${e.message}`)
+    console.error(`[WhatsApp/DL-B] cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
+    console.error(`[WhatsApp/DL-B] stack   : ${e.stack ?? "no stack"}`)
+    throw e
+  }
 
   const ext      = (meta.mime_type.split("/")[1] ?? "jpg").split(";")[0]
   const filename = `${mediaId}.${ext}`

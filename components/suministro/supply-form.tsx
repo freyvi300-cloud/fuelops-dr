@@ -6,12 +6,51 @@ import {
   Search, Truck, Camera, Upload, X,
   CheckCircle2, AlertCircle, RotateCcw,
   Fuel, ArrowLeft, Wrench, Zap, Tag,
+  Sparkles,
 } from "lucide-react"
 import { cn }                from "@/lib/utils"
 import type { SerializedCustomer }      from "@/app/actions/customers"
 import type { SerializedTruck }         from "@/app/actions/trucks"
 import type { SerializedSupply, ConfirmedSupplyResult } from "@/app/actions/supplies"
 import { confirmSupply }                from "@/app/actions/supplies"
+// OCR — imported from "use server" file, safe in client components
+import { analyzeMeterPhoto }            from "@/app/actions/ocr"
+
+// ─── OCR types (defined inline — no server-only imports in client bundle) ─────
+
+type OCRStatus = "idle" | "analyzing" | "done" | "error"
+
+interface OCRResultLocal {
+  gallons:      number | null
+  confidence:   number
+  provider:     string
+  processingMs: number
+}
+
+// ─── Client-side image compression ───────────────────────────────────────────
+// Resize to max 800px and convert to JPEG 80% before sending to OCR.
+// Runs entirely in the browser — reduces bandwidth and API cost.
+
+async function compressImage(base64: string, maxPx = 800, quality = 0.8): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      let { width, height } = img
+      if (width > maxPx || height > maxPx) {
+        if (width >= height) { height = Math.round(height * maxPx / width); width = maxPx }
+        else                 { width  = Math.round(width  * maxPx / height); height = maxPx }
+      }
+      const canvas = document.createElement("canvas")
+      canvas.width = width; canvas.height = height
+      const ctx = canvas.getContext("2d")
+      if (!ctx) { resolve(base64); return }
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL("image/jpeg", quality))
+    }
+    img.onerror = () => resolve(base64)  // fallback: send original
+    img.src = base64
+  })
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -446,6 +485,65 @@ function ConfirmCard({
   )
 }
 
+// ─── OCR RESULT DISPLAY ───────────────────────────────────────────────────────
+
+function OCRDisplay({ status, result }: { status: OCRStatus; result: OCRResultLocal | null }) {
+  if (status === "idle") return null
+
+  if (status === "analyzing") {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl mt-2">
+        <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
+        <span className="text-[11px] font-sans text-blue-700">Analizando imagen con IA…</span>
+      </div>
+    )
+  }
+
+  if (status === "error") {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-xl mt-2">
+        <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+        <span className="text-[11px] font-sans text-red-700">
+          No fue posible analizar la imagen. Ingresa los galones manualmente.
+        </span>
+      </div>
+    )
+  }
+
+  if (status === "done" && result) {
+    if (result.gallons !== null) {
+      return (
+        <div className="px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-xl mt-2 space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="text-[11px] font-bold text-emerald-700">
+              Galones detectados: {result.gallons.toFixed(2)} gal
+            </span>
+          </div>
+          <p className="text-[10px] font-sans text-slate-500 pl-5 flex items-center gap-1.5 flex-wrap">
+            <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+            Confianza: {result.confidence}%
+            <span className="text-slate-300">·</span>
+            {result.provider}
+            <span className="text-slate-300">·</span>
+            {result.processingMs}ms
+          </p>
+        </div>
+      )
+    }
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl mt-2">
+        <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+        <span className="text-[11px] font-sans text-amber-700">
+          No fue posible detectar el medidor. Ingresa los galones manualmente.
+        </span>
+      </div>
+    )
+  }
+
+  return null
+}
+
 // ─── 7. SUCCESS CARD ─────────────────────────────────────────────────────────
 
 function SuccessCard({
@@ -520,15 +618,19 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
   const [isPending, startTransition] = useTransition()
 
   // Form state
-  const [customer,  setCustomer]  = useState<SerializedCustomer | null>(null)
-  const [truckId,   setTruckId]   = useState("")
-  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [customer,     setCustomer]     = useState<SerializedCustomer | null>(null)
+  const [truckId,      setTruckId]      = useState("")
+  const [photoFile,    setPhotoFile]    = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
-  const [gallons,   setGallons]   = useState("")
-  const [price,     setPrice]     = useState("")
-  const [payment,   setPayment]   = useState<"CASH" | "CREDIT">("CASH")
-  const [error,     setError]     = useState<string | null>(null)
-  const [confirmed, setConfirmed] = useState<ConfirmedSupplyResult | null>(null)
+  const [gallons,      setGallons]      = useState("")
+  const [price,        setPrice]        = useState("")
+  const [payment,      setPayment]      = useState<"CASH" | "CREDIT">("CASH")
+  const [error,        setError]        = useState<string | null>(null)
+  const [confirmed,    setConfirmed]    = useState<ConfirmedSupplyResult | null>(null)
+
+  // OCR state — lives alongside the form, does not block registration
+  const [ocrStatus, setOcrStatus] = useState<OCRStatus>("idle")
+  const [ocrResult, setOcrResult] = useState<OCRResultLocal | null>(null)
 
   // Computed
   const gallonsNum = parseFloat(gallons) || 0
@@ -538,16 +640,31 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
 
   // When customer selected → auto-fill price
   function handleCustomerSelect(c: SerializedCustomer | null) {
-    setCustomer(c)
-    setTruckId("")
-    setError(null)
-    if (c && c.fuelPricePerGallon > 0) {
-      setPrice(c.fuelPricePerGallon.toFixed(2))
-    }
+    setCustomer(c); setTruckId(""); setError(null)
+    if (c && c.fuelPricePerGallon > 0) setPrice(c.fuelPricePerGallon.toFixed(2))
   }
 
-  const handlePhotoChange = useCallback((file: File, prev: string) => {
-    setPhotoFile(file); setPhotoPreview(prev)
+  // Photo selected → compress → trigger OCR (non-blocking)
+  const handlePhotoChange = useCallback(async (file: File, prev: string) => {
+    setPhotoFile(file)
+    setPhotoPreview(prev)
+    setOcrStatus("analyzing")
+    setOcrResult(null)
+
+    try {
+      const compressed = await compressImage(prev)   // client-side resize + JPEG
+      const raw = await analyzeMeterPhoto(compressed) // server action → OpenAI Vision
+      setOcrResult({
+        gallons:      raw.gallons,
+        confidence:   raw.confidence,
+        provider:     raw.provider,
+        processingMs: raw.processingMs,
+      })
+      setOcrStatus("done")
+    } catch (err) {
+      console.error("[OCR]", err)
+      setOcrStatus("error")
+    }
   }, [])
 
   // Find selected truck
@@ -576,9 +693,15 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
     })
   }
 
+  function handlePhotoClear() {
+    setPhotoFile(null); setPhotoPreview(null)
+    setOcrStatus("idle"); setOcrResult(null)
+  }
+
   function reset() {
     setCustomer(null); setTruckId(""); setPhotoFile(null); setPhotoPreview(null)
     setGallons(""); setPrice(""); setPayment("CASH"); setError(null); setConfirmed(null)
+    setOcrStatus("idle"); setOcrResult(null)
   }
 
   // ── Success screen ──────────────────────────────────────────────────────────
@@ -636,14 +759,15 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
             {/* ══ RIGHT COLUMN: Photo + Info + Payment + Confirm ══════════ */}
             <div className="space-y-3">
 
-              {/* Photo */}
+              {/* Photo + OCR */}
               <Card className="p-4">
                 <SectionLabel>3 · Foto del medidor (opcional)</SectionLabel>
                 <CompactPhoto
                   preview={photoPreview}
                   onChange={handlePhotoChange}
-                  onClear={() => { setPhotoFile(null); setPhotoPreview(null) }}
+                  onClear={handlePhotoClear}
                 />
+                <OCRDisplay status={ocrStatus} result={ocrResult} />
               </Card>
 
               {/* Supply info */}

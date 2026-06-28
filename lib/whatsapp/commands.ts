@@ -170,17 +170,24 @@ async function handleImageMessage(msg: IncomingMessage): Promise<void> {
     return
   }
 
-  // 1. Immediate ACK — user sees response before we do any heavy processing
+  // 1. Immediate ACK to user
   await sendTextMessage(msg.from,
     `📷 *Imagen recibida correctamente.*\nEstoy analizándola...`
   )
   console.log(`[Nova/Image] ${who} → ACK sent`)
 
-  // 2. Process asynchronously — do NOT await so the webhook handler can return 200 fast
-  processImageAsync(msg).catch(err =>
-    console.error(`[Nova/Image] ${who} → processImageAsync FAILED:`,
-      err instanceof Error ? err.message : err)
-  )
+  // 2. BLOCKING for diagnosis — webhook waits for full processing before returning 200
+  // TODO: revert to fire-and-forget once the flow is confirmed working:
+  //   processImageAsync(msg).catch(err => console.error(...))
+  console.log(`[Nova/Image] ${who} → starting BLOCKING processImageAsync`)
+  try {
+    await processImageAsync(msg)
+    console.log(`[Nova/Image] ${who} → BLOCKING processImageAsync DONE`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Nova/Image] ${who} → BLOCKING processImageAsync THREW:`, e.message)
+    console.error(`[Nova/Image] stack:`, e.stack)
+  }
 }
 
 async function processImageAsync(msg: IncomingMessage): Promise<void> {

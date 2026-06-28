@@ -1,91 +1,93 @@
 /**
- * FuelOps-DR — WhatsApp Self-Diagnostic + Auto-Fix Endpoint
+ * FuelOps-DR — WhatsApp Self-Diagnostic + Auto-Fix
  *
- * Usage (one-time, from browser or curl):
- *   GET https://your-app.vercel.app/api/whatsapp/diagnose?secret=fuelops-nova-webhook-2025
+ * GET /api/whatsapp/diagnose?secret=TOKEN
+ *   → full diagnostic (check subscription, phone details)
  *
- * What it does:
- *   1. Verifies all env vars are configured
- *   2. Calls GET /{WABA_ID}/subscribed_apps — checks WABA subscription
- *   3. If not subscribed → calls POST /{WABA_ID}/subscribed_apps (auto-fix)
- *   4. Checks phone number details
- *   5. Returns a full JSON report with every step
- *
- * Delete or protect this file after the issue is resolved.
+ * GET /api/whatsapp/diagnose?secret=TOKEN&action=subscribe&target_app=APP_ID
+ *   → force subscription + confirm APP_ID appears in subscribed list
  */
 
 import { NextRequest, NextResponse } from "next/server"
 
-const WABA_ID    = "2139335246632222"
-const API_BASE   = "https://graph.facebook.com/v20.0"
+const WABA_ID  = "2139335246632222"
+const BASE     = "https://graph.facebook.com/v20.0"
 
 export async function GET(req: NextRequest) {
-  // Gate: require the verify token as query param to avoid public exposure
-  const secret = req.nextUrl.searchParams.get("secret")
+  const secret      = req.nextUrl.searchParams.get("secret")
+  const action      = req.nextUrl.searchParams.get("action")   // "subscribe" to force
+  const targetAppId = req.nextUrl.searchParams.get("target_app") ?? ""
+
   const expectedSecret = process.env.WHATSAPP_VERIFY_TOKEN ?? "fuelops-nova-webhook-2025"
   if (secret !== expectedSecret) {
     return NextResponse.json({ error: "Forbidden — add ?secret=YOUR_VERIFY_TOKEN" }, { status: 403 })
   }
 
-  const token       = process.env.WHATSAPP_ACCESS_TOKEN    ?? ""
-  const phoneId     = process.env.WHATSAPP_PHONE_NUMBER_ID ?? ""
-  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN    ?? ""
+  const token   = process.env.WHATSAPP_ACCESS_TOKEN    ?? ""
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID ?? ""
+  const verTok  = process.env.WHATSAPP_VERIFY_TOKEN    ?? ""
 
   const report: Record<string, unknown> = {
-    timestamp:  new Date().toISOString(),
-    waba_id:    WABA_ID,
+    timestamp:   new Date().toISOString(),
+    waba_id:     WABA_ID,
+    target_app:  targetAppId || "(not specified)",
     env_vars: {
-      WHATSAPP_VERIFY_TOKEN:    verifyToken   ? `SET (${verifyToken.length} chars: "${verifyToken}")` : "❌ MISSING",
-      WHATSAPP_ACCESS_TOKEN:    token         ? `SET (${token.length} chars, starts: ${token.slice(0, 10)}…)` : "❌ MISSING",
-      WHATSAPP_PHONE_NUMBER_ID: phoneId       ? `SET: "${phoneId}"` : "❌ MISSING",
+      WHATSAPP_VERIFY_TOKEN:    verTok  ? `SET ("${verTok}")` : "❌ MISSING",
+      WHATSAPP_ACCESS_TOKEN:    token   ? `SET (${token.length} chars, starts: ${token.slice(0,15)}…)` : "❌ MISSING",
+      WHATSAPP_PHONE_NUMBER_ID: phoneId ? `SET: "${phoneId}"` : "❌ MISSING",
     },
   }
 
   if (!token) {
-    report.error = "WHATSAPP_ACCESS_TOKEN is empty — cannot call Meta API. Set it in Vercel env vars."
+    report.error = "WHATSAPP_ACCESS_TOKEN is empty"
     return NextResponse.json(report, { status: 200 })
   }
 
-  // ── Step 1: Check WABA subscribed apps ─────────────────────────────────────
-  let subscribed = false
-  let appId: string | null = null
-
+  // ── Step 0: Identify which app owns this token ──────────────────────────────
   try {
-    const res  = await fetch(`${API_BASE}/${WABA_ID}/subscribed_apps?access_token=${token}`)
-    const data = await res.json() as { data?: Array<{ whatsapp_business_api_data?: { id: string; name: string } }> }
-
-    report.step1_check_waba_subscription = {
-      http_status:  res.status,
-      raw_response: data,
+    const r = await fetch(`${BASE}/me?fields=id,name,type`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+    const d = await r.json() as Record<string, unknown>
+    report.step0_token_owner = {
+      http_status: r.status,
+      data:        d,
+      verdict: r.ok
+        ? `Token belongs to: id=${d.id}, name=${d.name}, type=${d.type}`
+        : `Token introspection failed: ${JSON.stringify(d)}`,
+      matches_target: targetAppId ? (String(d.id) === targetAppId ? "✅ YES" : `❌ NO — token id=${d.id}, target=${targetAppId}`) : "n/a",
     }
-
-    if (!res.ok) {
-      report.step1_check_waba_subscription = {
-        ...report.step1_check_waba_subscription as object,
-        error: "Meta API returned non-200 — token might be expired or invalid",
-      }
-    } else {
-      const apps = data.data ?? []
-      subscribed = apps.length > 0
-      appId      = apps[0]?.whatsapp_business_api_data?.id ?? null
-      report.step1_check_waba_subscription = {
-        ...report.step1_check_waba_subscription as object,
-        subscribed,
-        subscribed_app_id:   appId,
-        subscribed_app_name: apps[0]?.whatsapp_business_api_data?.name ?? null,
-        verdict: subscribed
-          ? "✅ App already subscribed to WABA"
-          : "❌ App NOT subscribed to WABA — this is why POSTs are not arriving",
-      }
-    }
-  } catch (err) {
-    report.step1_check_waba_subscription = { error: String(err) }
+  } catch (e) {
+    report.step0_token_owner = { error: String(e) }
   }
 
-  // ── Step 2: Auto-subscribe if needed ────────────────────────────────────────
-  if (!subscribed) {
+  // ── Step 1: Current subscriptions ──────────────────────────────────────────
+  let subscribedIds: string[] = []
+  try {
+    const r = await fetch(`${BASE}/${WABA_ID}/subscribed_apps`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+    const d = await r.json() as { data?: Array<{ whatsapp_business_api_data?: { id: string; name: string } }> }
+    subscribedIds = (d.data ?? []).map(a => a.whatsapp_business_api_data?.id ?? "")
+    report.step1_current_subscriptions = {
+      http_status:    r.status,
+      raw_response:   d,
+      subscribed_ids: subscribedIds,
+      target_present: targetAppId ? subscribedIds.includes(targetAppId) : "n/a",
+      verdict: r.ok
+        ? (subscribedIds.length === 0
+            ? "❌ No apps subscribed to WABA"
+            : `Apps subscribed: ${subscribedIds.join(", ")}`)
+        : `API error: ${JSON.stringify(d)}`,
+    }
+  } catch (e) {
+    report.step1_current_subscriptions = { error: String(e) }
+  }
+
+  // ── Step 2: Force subscription (always run when action=subscribe) ──────────
+  if (action === "subscribe" || !subscribedIds.includes(targetAppId)) {
     try {
-      const res  = await fetch(`${API_BASE}/${WABA_ID}/subscribed_apps`, {
+      const r = await fetch(`${BASE}/${WABA_ID}/subscribed_apps`, {
         method:  "POST",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -95,61 +97,74 @@ export async function GET(req: NextRequest) {
           subscribed_fields: ["messages", "message_deliveries", "message_reads", "message_echoes"],
         }),
       })
-      const data = await res.json() as { success?: boolean; error?: unknown }
-
-      report.step2_auto_subscribe = {
-        http_status:  res.status,
-        raw_response: data,
-        verdict: data.success === true
-          ? "✅ Successfully subscribed app to WABA — messages should now flow"
-          : `❌ Subscription failed: ${JSON.stringify(data.error ?? data)}`,
+      const d = await r.json() as Record<string, unknown>
+      report.step2_subscribe = {
+        http_status:  r.status,
+        raw_response: d,
+        verdict: d.success === true
+          ? "✅ POST /subscribed_apps succeeded"
+          : `❌ Failed: ${JSON.stringify(d)}`,
       }
-    } catch (err) {
-      report.step2_auto_subscribe = { error: String(err) }
+    } catch (e) {
+      report.step2_subscribe = { error: String(e) }
     }
   } else {
-    report.step2_auto_subscribe = { skipped: "App was already subscribed, no action needed" }
+    report.step2_subscribe = { skipped: `Target app ${targetAppId} already in subscription list` }
   }
 
-  // ── Step 3: Verify subscription after fix ───────────────────────────────────
+  // ── Step 3: Re-read subscriptions to confirm ────────────────────────────────
   try {
-    const res  = await fetch(`${API_BASE}/${WABA_ID}/subscribed_apps?access_token=${token}`)
-    const data = await res.json() as { data?: Array<{ whatsapp_business_api_data?: { id: string; name: string } }> }
-    const apps = data.data ?? []
-    report.step3_verify_after_fix = {
-      now_subscribed:      apps.length > 0,
-      subscribed_app_id:   apps[0]?.whatsapp_business_api_data?.id ?? null,
-      subscribed_app_name: apps[0]?.whatsapp_business_api_data?.name ?? null,
-      verdict: apps.length > 0
-        ? "✅ WABA subscription confirmed — send a WhatsApp message to test"
-        : "❌ Still not subscribed — check token permissions (needs whatsapp_business_management scope)",
+    const r = await fetch(`${BASE}/${WABA_ID}/subscribed_apps`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+    const d = await r.json() as { data?: Array<{ whatsapp_business_api_data?: { id: string; name: string } }> }
+    const ids = (d.data ?? []).map(a => a.whatsapp_business_api_data?.id ?? "")
+    const targetFound = targetAppId ? ids.includes(targetAppId) : null
+    report.step3_confirm = {
+      http_status:    r.status,
+      subscribed_ids: ids,
+      subscribed_names: (d.data ?? []).map(a => a.whatsapp_business_api_data?.name ?? ""),
+      raw_response:   d,
+      target_present: targetFound,
+      verdict: targetFound === true
+        ? `✅ App ${targetAppId} IS in subscribed list — webhook should now receive POSTs`
+        : targetFound === false
+          ? `❌ App ${targetAppId} NOT in subscribed list — token may belong to a different app`
+          : `(specify ?target_app=APP_ID to verify)`,
     }
-  } catch (err) {
-    report.step3_verify_after_fix = { error: String(err) }
+  } catch (e) {
+    report.step3_confirm = { error: String(e) }
   }
 
-  // ── Step 4: Check phone number details ──────────────────────────────────────
+  // ── Step 4: Phone number details ────────────────────────────────────────────
   if (phoneId) {
     try {
-      const res  = await fetch(`${API_BASE}/${phoneId}?fields=display_phone_number,verified_name,quality_rating,platform_type,status&access_token=${token}`)
-      const data = await res.json()
-      report.step4_phone_number_details = { http_status: res.status, data }
-    } catch (err) {
-      report.step4_phone_number_details = { error: String(err) }
+      const r = await fetch(
+        `${BASE}/${phoneId}?fields=display_phone_number,verified_name,quality_rating,platform_type,status,name_status`,
+        { headers: { "Authorization": `Bearer ${token}` } },
+      )
+      const d = await r.json()
+      report.step4_phone_details = { http_status: r.status, data: d }
+    } catch (e) {
+      report.step4_phone_details = { error: String(e) }
     }
-  } else {
-    report.step4_phone_number_details = { skipped: "WHATSAPP_PHONE_NUMBER_ID not set" }
   }
 
   // ── Summary ─────────────────────────────────────────────────────────────────
-  const sub3 = report.step3_verify_after_fix as Record<string,unknown>
+  const s3 = report.step3_confirm as Record<string,unknown>
+  const s0 = report.step0_token_owner as Record<string,unknown>
   report.summary = {
-    was_subscribed_before: subscribed,
-    auto_fix_applied:      !subscribed,
-    is_subscribed_now:     sub3?.now_subscribed === true,
-    next_step: sub3?.now_subscribed === true
-      ? "Send 'hola' from your WhatsApp to the Business number — Vercel should now receive the POST"
-      : "Check that WHATSAPP_ACCESS_TOKEN has 'whatsapp_business_management' permission",
+    token_owner_id:    (s0?.data as Record<string,unknown>)?.id,
+    target_app_id:     targetAppId || "(none provided)",
+    token_matches_target: targetAppId
+      ? String((s0?.data as Record<string,unknown>)?.id) === targetAppId
+      : "unknown",
+    target_subscribed: s3?.target_present,
+    conclusion: s3?.target_present === true
+      ? "✅ READY — your app is subscribed, messages should trigger POST"
+      : s3?.target_present === false && targetAppId
+        ? "❌ Token does not belong to your target app — generate a token FROM app " + targetAppId
+        : "Specify ?target_app=YOUR_APP_ID to verify",
   }
 
   return NextResponse.json(report, { status: 200 })

@@ -1,10 +1,10 @@
 "use server"
 
-import { prisma }          from "@/lib/prisma"
-import { revalidatePath }  from "next/cache"
-import type { SystemSettings } from "@/lib/system-settings"
-
-export type { SystemSettings }
+import { prisma }         from "@/lib/prisma"
+import { revalidatePath } from "next/cache"
+// ⚠ Do NOT re-export SystemSettings type from here — this file is imported
+// by the Client Component settings-form.tsx and any re-export could pull
+// lib/system-settings (which imports Prisma) into the client bundle.
 
 export interface UpdateSettingsData {
   businessName:      string
@@ -18,8 +18,10 @@ export interface UpdateSettingsData {
 }
 
 export async function updateSystemSettings(data: UpdateSettingsData): Promise<void> {
-  // Validate threshold order
-  if (data.alertRedGallons < 0 || data.alertYellowGallons < 0 || data.tankCapacity <= 0) {
+  if (data.tankCapacity <= 0) {
+    throw new Error("La capacidad del tanque debe ser mayor a cero.")
+  }
+  if (data.alertRedGallons < 0 || data.alertYellowGallons < 0) {
     throw new Error("Los valores de galones deben ser positivos.")
   }
   if (data.alertRedGallons >= data.alertYellowGallons) {
@@ -39,7 +41,6 @@ export async function updateSystemSettings(data: UpdateSettingsData): Promise<vo
     update: data,
   })
 
-  // Revalidate all pages that use settings
   revalidatePath("/")
   revalidatePath("/configuracion")
   revalidatePath("/inventario")

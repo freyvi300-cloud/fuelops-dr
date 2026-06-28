@@ -6,9 +6,25 @@ import {
   Settings, Building2, Droplets, AlertTriangle,
   CheckCircle2, Bell, Shield, Save,
 } from "lucide-react"
-import { cn } from "@/lib/utils"
-import type { SystemSettings }     from "@/lib/system-settings"
-import { updateSystemSettings }    from "@/app/actions/settings"
+import { cn }                  from "@/lib/utils"
+// ⚠ Do NOT import from @/lib/system-settings here — it imports Prisma,
+// which is server-only and cannot be bundled for the browser.
+// Type is defined inline below.
+import { updateSystemSettings } from "@/app/actions/settings"
+
+// ─── Inline type — no server-only imports ─────────────────────────────────────
+// This mirrors SystemSettings from lib/system-settings.ts but lives in the
+// client bundle without pulling in Prisma or any server-only module.
+export interface SettingsFormData {
+  businessName:       string
+  rnc:                string | null
+  phone:              string | null
+  address:            string | null
+  tankCapacity:       number
+  alertRedGallons:    number
+  alertYellowGallons: number
+  defaultFuelPrice:   number
+}
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -47,12 +63,12 @@ function AlertPreview({
 }: {
   tankCapacity: number; alertRed: number; alertYellow: number
 }) {
-  const valid = tankCapacity > 0 && alertRed < alertYellow && alertYellow < tankCapacity
+  const valid = tankCapacity > 0 && alertRed >= 0 && alertRed < alertYellow && alertYellow < tankCapacity
   if (!valid) {
     return (
       <div className="mt-4 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
         <p className="text-xs font-sans text-red-700">
-          ⚠ Los umbrales deben cumplir: Rojo &lt; Amarillo &lt; Capacidad total
+          Los umbrales deben cumplir: 0 ≤ Rojo &lt; Amarillo &lt; Capacidad total
         </p>
       </div>
     )
@@ -66,7 +82,6 @@ function AlertPreview({
       <p className="text-[10px] font-sans font-semibold text-slate-400 uppercase tracking-wider mb-2">
         Vista previa de alertas
       </p>
-      {/* Track */}
       <div className="relative w-full h-4 bg-slate-100 rounded-full overflow-hidden">
         <div className="absolute inset-y-0 left-0 bg-red-500"    style={{ width: `${redPct}%` }} />
         <div className="absolute inset-y-0 bg-amber-400"
@@ -74,7 +89,6 @@ function AlertPreview({
         <div className="absolute inset-y-0 bg-emerald-500"
           style={{ left: `${yellowPct}%`, right: "0%" }} />
       </div>
-      {/* Labels */}
       <div className="flex items-start justify-between mt-2 text-[10px] font-sans">
         <div className="text-center" style={{ width: `${redPct}%`, minWidth: 0 }}>
           <span className="text-red-600 font-bold block truncate">🔴 Crítico</span>
@@ -89,7 +103,6 @@ function AlertPreview({
           <span className="text-slate-400">&gt; {alertYellow.toLocaleString()} gal</span>
         </div>
       </div>
-      {/* Rule summary */}
       <div className="mt-3 space-y-1">
         {[
           { color: "bg-red-500",    label: `Inventario ≤ ${alertRed.toLocaleString()} gal → Alerta ROJA (crítico)` },
@@ -108,7 +121,7 @@ function AlertPreview({
 
 // ─── Main form ────────────────────────────────────────────────────────────────
 
-interface Props { settings: SystemSettings }
+interface Props { settings: SettingsFormData }
 
 export default function SettingsForm({ settings }: Props) {
   const router = useRouter()
@@ -116,23 +129,23 @@ export default function SettingsForm({ settings }: Props) {
   const [saved,  setSaved]  = useState(false)
   const [error,  setError]  = useState<string | null>(null)
 
-  // Live preview state for alert thresholds
-  const [tankCapacity,      setTankCapacity]      = useState(settings.tankCapacity)
-  const [alertRedGallons,   setAlertRedGallons]   = useState(settings.alertRedGallons)
-  const [alertYellowGallons,setAlertYellowGallons]= useState(settings.alertYellowGallons)
+  // Controlled state for the live preview
+  const [tankCapacity,       setTankCapacity]       = useState(settings.tankCapacity)
+  const [alertRedGallons,    setAlertRedGallons]    = useState(settings.alertRedGallons)
+  const [alertYellowGallons, setAlertYellowGallons] = useState(settings.alertYellowGallons)
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaved(false); setError(null)
-    const fd = new FormData(e.currentTarget)
-    const num = (k: string) => parseFloat(fd.get(k) as string) || 0
+    const fd  = new FormData(e.currentTarget)
+    const num = (k: string) => Math.max(0, parseFloat(fd.get(k) as string) || 0)
 
     startTransition(async () => {
       try {
         await updateSystemSettings({
           businessName:       (fd.get("businessName") as string).trim(),
-          rnc:                (fd.get("rnc") as string).trim()  || null,
-          phone:              (fd.get("phone") as string).trim() || null,
+          rnc:                (fd.get("rnc") as string).trim()     || null,
+          phone:              (fd.get("phone") as string).trim()   || null,
           address:            (fd.get("address") as string).trim() || null,
           tankCapacity:       num("tankCapacity"),
           alertRedGallons:    num("alertRedGallons"),
@@ -161,7 +174,7 @@ export default function SettingsForm({ settings }: Props) {
             <div>
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">Configuración</h1>
               <p className="text-xs font-sans text-slate-400 mt-0.5">
-                Parámetros del sistema — los cambios aplican al Dashboard y alertas en tiempo real.
+                Los cambios aplican al Dashboard y las alertas automáticamente.
               </p>
             </div>
           </div>
@@ -172,12 +185,11 @@ export default function SettingsForm({ settings }: Props) {
           </button>
         </div>
 
-        {/* Feedback */}
         {saved && (
           <div className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <p className="text-xs font-sans text-emerald-700 font-semibold">
-              Configuración guardada correctamente. El Dashboard y las alertas se actualizarán.
+              Configuración guardada. El Dashboard y las alertas han sido actualizados.
             </p>
           </div>
         )}
@@ -193,7 +205,7 @@ export default function SettingsForm({ settings }: Props) {
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <form id="settings-form" onSubmit={handleSubmit} className="space-y-5 max-w-2xl">
 
-          {/* ── Negocio ────────────────────────────────────────────────────── */}
+          {/* ── Negocio ──────────────────────────────────────────────────── */}
           <Section icon={Building2} iconBg="bg-blue-50" iconColor="text-blue-600"
             title="Información del negocio"
             description="Datos que aparecen en facturas, recibos y reportes.">
@@ -223,7 +235,7 @@ export default function SettingsForm({ settings }: Props) {
             </div>
           </Section>
 
-          {/* ── Combustible / Inventario ────────────────────────────────────── */}
+          {/* ── Combustible ──────────────────────────────────────────────── */}
           <Section icon={Droplets} iconBg="bg-amber-50" iconColor="text-amber-500"
             title="Configuración de combustible e inventario"
             description="Capacidad del tanque y umbrales para las alertas automáticas.">
@@ -234,9 +246,10 @@ export default function SettingsForm({ settings }: Props) {
                     Capacidad total del tanque (gal)
                     <span className="ml-1 text-slate-400 font-normal">— obligatorio</span>
                   </label>
-                  <input name="tankCapacity" type="number" min="1" step="1"
-                    value={tankCapacity} onChange={e => setTankCapacity(parseFloat(e.target.value) || 0)}
-                    placeholder="20000" required className={INPUT} />
+                  <input name="tankCapacity" type="number" min="1" step="1" required
+                    value={tankCapacity}
+                    onChange={e => setTankCapacity(parseFloat(e.target.value) || 0)}
+                    placeholder="20000" className={INPUT} />
                 </div>
                 <div>
                   <label className={LABEL}>Precio por galón por defecto (RD$)</label>
@@ -246,11 +259,10 @@ export default function SettingsForm({ settings }: Props) {
                 </div>
               </div>
 
-              {/* Alert thresholds — the key feature */}
               <div className="border-t border-slate-100 pt-4">
                 <p className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                  Umbrales de alerta — expresados en galones absolutos
+                  Umbrales de alerta — en galones absolutos
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -258,9 +270,10 @@ export default function SettingsForm({ settings }: Props) {
                       <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1.5 align-middle" />
                       Inventario mínimo — alerta ROJA (gal)
                     </label>
-                    <input name="alertRedGallons" type="number" min="0" step="1"
-                      value={alertRedGallons} onChange={e => setAlertRedGallons(parseFloat(e.target.value) || 0)}
-                      placeholder="2000" required className={INPUT} />
+                    <input name="alertRedGallons" type="number" min="0" step="1" required
+                      value={alertRedGallons}
+                      onChange={e => setAlertRedGallons(parseFloat(e.target.value) || 0)}
+                      placeholder="2000" className={INPUT} />
                     <p className="text-[10px] font-sans text-slate-400 mt-1">
                       Inventario ≤ este valor → alerta crítica roja
                     </p>
@@ -270,16 +283,15 @@ export default function SettingsForm({ settings }: Props) {
                       <span className="inline-block w-3 h-3 rounded-full bg-amber-400 mr-1.5 align-middle" />
                       Inventario bajo — alerta AMARILLA (gal)
                     </label>
-                    <input name="alertYellowGallons" type="number" min="0" step="1"
-                      value={alertYellowGallons} onChange={e => setAlertYellowGallons(parseFloat(e.target.value) || 0)}
-                      placeholder="4000" required className={INPUT} />
+                    <input name="alertYellowGallons" type="number" min="0" step="1" required
+                      value={alertYellowGallons}
+                      onChange={e => setAlertYellowGallons(parseFloat(e.target.value) || 0)}
+                      placeholder="4000" className={INPUT} />
                     <p className="text-[10px] font-sans text-slate-400 mt-1">
                       Inventario ≤ este valor → alerta de precaución amarilla
                     </p>
                   </div>
                 </div>
-
-                {/* Live preview */}
                 <AlertPreview
                   tankCapacity={tankCapacity}
                   alertRed={alertRedGallons}
@@ -289,7 +301,7 @@ export default function SettingsForm({ settings }: Props) {
             </div>
           </Section>
 
-          {/* ── Notificaciones ──────────────────────────────────────────────── */}
+          {/* ── Notificaciones ───────────────────────────────────────────── */}
           <Section icon={Bell} iconBg="bg-orange-50" iconColor="text-orange-500"
             title="Notificaciones y alertas"
             description="Cuándo y cómo recibir alertas del sistema.">
@@ -306,14 +318,14 @@ export default function SettingsForm({ settings }: Props) {
             </div>
           </Section>
 
-          {/* ── Seguridad ──────────────────────────────────────────────────── */}
+          {/* ── Seguridad ────────────────────────────────────────────────── */}
           <Section icon={Shield} iconBg="bg-violet-50" iconColor="text-violet-600"
             title="Seguridad y acceso"
             description="Contraseña y sesión del administrador.">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className={LABEL}>Contraseña actual</label>
-                <input disabled type="password" value="••••••••" className={INPUT} />
+                <input disabled type="password" value="••••••••" readOnly className={INPUT} />
               </div>
               <div>
                 <label className={LABEL}>Nueva contraseña</label>
@@ -321,7 +333,7 @@ export default function SettingsForm({ settings }: Props) {
               </div>
             </div>
             <p className="text-[11px] font-sans text-slate-400 mt-3">
-              El cambio de contraseña estará disponible cuando se active la autenticación completa.
+              Disponible cuando se active la autenticación completa.
             </p>
           </Section>
 

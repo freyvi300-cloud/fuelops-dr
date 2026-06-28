@@ -4,7 +4,7 @@ import { useState, useTransition } from "react"
 import { useRouter }               from "next/navigation"
 import {
   Settings, Building2, Droplets, AlertTriangle,
-  CheckCircle2, Bell, Shield, Save,
+  CheckCircle2, Bell, Shield, Save, Sparkles,
 } from "lucide-react"
 import { cn }                  from "@/lib/utils"
 // ⚠ Do NOT import from @/lib/system-settings here — it imports Prisma,
@@ -24,6 +24,8 @@ export interface SettingsFormData {
   alertRedGallons:    number
   alertYellowGallons: number
   defaultFuelPrice:   number
+  ocrEnabled:         boolean
+  ocrMinConfidence:   number
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -133,6 +135,8 @@ export default function SettingsForm({ settings }: Props) {
   const [tankCapacity,       setTankCapacity]       = useState(settings.tankCapacity)
   const [alertRedGallons,    setAlertRedGallons]    = useState(settings.alertRedGallons)
   const [alertYellowGallons, setAlertYellowGallons] = useState(settings.alertYellowGallons)
+  const [ocrEnabled,         setOcrEnabled]         = useState(settings.ocrEnabled)
+  const [ocrMinConf,         setOcrMinConf]         = useState(settings.ocrMinConfidence)
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -151,6 +155,8 @@ export default function SettingsForm({ settings }: Props) {
           alertRedGallons:    num("alertRedGallons"),
           alertYellowGallons: num("alertYellowGallons"),
           defaultFuelPrice:   num("defaultFuelPrice"),
+          ocrEnabled:         fd.get("ocrEnabled") === "true",
+          ocrMinConfidence:   Math.min(100, Math.max(0, parseInt(fd.get("ocrMinConfidence") as string) || 90)),
         })
         setSaved(true)
         router.refresh()
@@ -298,6 +304,87 @@ export default function SettingsForm({ settings }: Props) {
                   alertYellow={alertYellowGallons}
                 />
               </div>
+            </div>
+          </Section>
+
+          {/* ── OCR ─────────────────────────────────────────────────────── */}
+          <Section icon={Sparkles} iconBg="bg-violet-50" iconColor="text-violet-600"
+            title="Lectura automática del medidor (OCR)"
+            description="IA que lee los galones desde la foto del medidor en Registrar suministro.">
+            <div className="space-y-4">
+              {/* Enable/Disable */}
+              <div>
+                <label className={LABEL}>Estado del OCR</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { value: "true",  label: "✅ Activado",   desc: "Analiza fotos automáticamente" },
+                    { value: "false", label: "⏸ Desactivado", desc: "Solo entrada manual de galones" },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setOcrEnabled(opt.value === "true")}
+                      className={cn(
+                        "flex flex-col items-start gap-0.5 p-3 rounded-xl border-2 text-left transition-all",
+                        (opt.value === "true") === ocrEnabled
+                          ? "border-violet-500 bg-violet-50"
+                          : "border-slate-200 hover:border-slate-300"
+                      )}
+                    >
+                      <span className={cn("text-sm font-bold",
+                        (opt.value === "true") === ocrEnabled ? "text-violet-700" : "text-slate-700")}>
+                        {opt.label}
+                      </span>
+                      <span className="text-[10px] font-sans text-slate-400">{opt.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                <input type="hidden" name="ocrEnabled" value={ocrEnabled ? "true" : "false"} />
+              </div>
+
+              {/* Min confidence */}
+              <div>
+                <label className={LABEL}>
+                  Confianza mínima para auto-rellenar galones (%)
+                  <span className="ml-1.5 text-slate-400 font-normal">— default 90%</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    name="ocrMinConfidence"
+                    type="number"
+                    min="0" max="100" step="1"
+                    value={ocrMinConf}
+                    onChange={e => setOcrMinConf(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                    className={cn(INPUT, "w-24 text-center font-bold")}
+                  />
+                  <div className="flex-1">
+                    <input
+                      type="range" min="0" max="100" step="5"
+                      value={ocrMinConf}
+                      onChange={e => setOcrMinConf(parseInt(e.target.value))}
+                      className="w-full accent-violet-600"
+                    />
+                    <div className="flex justify-between text-[10px] font-sans text-slate-400 mt-0.5">
+                      <span>0% — siempre mostrar</span>
+                      <span>100% — nunca mostrar</span>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] font-sans text-slate-500 mt-2">
+                  Si la IA detecta galones con confianza{" "}
+                  <strong>≥ {ocrMinConf}%</strong> → muestra botón &quot;Usar galones detectados&quot;.{" "}
+                  Si es menor → muestra &quot;Revisa manualmente antes de usar&quot;.
+                </p>
+              </div>
+
+              {/* OCR test link */}
+              <a
+                href="/ocr-test"
+                className="inline-flex items-center gap-2 text-[11px] font-sans text-violet-600 hover:text-violet-700 font-semibold"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Probar el OCR con una imagen →
+              </a>
             </div>
           </Section>
 

@@ -487,7 +487,14 @@ function ConfirmCard({
 
 // ─── OCR RESULT DISPLAY ───────────────────────────────────────────────────────
 
-function OCRDisplay({ status, result }: { status: OCRStatus; result: OCRResultLocal | null }) {
+function OCRDisplay({
+  status, result, ocrMinConfidence, onUseGallons,
+}: {
+  status: OCRStatus
+  result: OCRResultLocal | null
+  ocrMinConfidence: number
+  onUseGallons: (gallons: number) => void
+}) {
   if (status === "idle") return null
 
   if (status === "analyzing") {
@@ -512,21 +519,41 @@ function OCRDisplay({ status, result }: { status: OCRStatus; result: OCRResultLo
 
   if (status === "done" && result) {
     if (result.gallons !== null) {
+      const highConf = result.confidence >= ocrMinConfidence
       return (
-        <div className="px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-xl mt-2 space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span className="text-[11px] font-bold text-emerald-700">
-              Galones detectados: {result.gallons.toFixed(2)} gal
-            </span>
+        <div className={cn(
+          "px-3 py-2 rounded-xl border mt-2 space-y-1.5",
+          highConf ? "bg-emerald-50 border-emerald-100" : "bg-amber-50 border-amber-100"
+        )}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              {highConf
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                : <AlertCircle  className="w-3.5 h-3.5 text-amber-500  shrink-0" />
+              }
+              <span className={cn("text-[11px] font-bold",
+                highConf ? "text-emerald-700" : "text-amber-700")}>
+                {result.gallons.toFixed(2)} gal · {result.confidence}%
+              </span>
+            </div>
+
+            {highConf ? (
+              <button
+                type="button"
+                onClick={() => onUseGallons(result.gallons!)}
+                className="text-[10px] font-bold bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg transition-colors shrink-0"
+              >
+                Usar galones detectados
+              </button>
+            ) : (
+              <span className="text-[10px] text-amber-600 font-semibold shrink-0">
+                Revisa manualmente antes de usar
+              </span>
+            )}
           </div>
-          <p className="text-[10px] font-sans text-slate-500 pl-5 flex items-center gap-1.5 flex-wrap">
+          <p className="text-[10px] font-sans text-slate-400 flex items-center gap-1 pl-5">
             <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-            Confianza: {result.confidence}%
-            <span className="text-slate-300">·</span>
-            {result.provider}
-            <span className="text-slate-300">·</span>
-            {result.processingMs}ms
+            {result.provider} · {result.processingMs}ms
           </p>
         </div>
       )
@@ -609,12 +636,14 @@ function SuccessCard({
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 interface SupplyFormProps {
-  customers:      SerializedCustomer[]
-  trucks:         SerializedTruck[]
-  recentSupplies: SerializedSupply[]
+  customers:        SerializedCustomer[]
+  trucks:           SerializedTruck[]
+  recentSupplies:   SerializedSupply[]
+  ocrEnabled:       boolean
+  ocrMinConfidence: number
 }
 
-export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
+export default function SupplyForm({ customers, trucks, ocrEnabled, ocrMinConfidence }: SupplyFormProps) {
   const [isPending, startTransition] = useTransition()
 
   // Form state
@@ -644,16 +673,18 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
     if (c && c.fuelPricePerGallon > 0) setPrice(c.fuelPricePerGallon.toFixed(2))
   }
 
-  // Photo selected → compress → trigger OCR (non-blocking)
+  // Photo selected → compress → trigger OCR only if enabled (non-blocking)
   const handlePhotoChange = useCallback(async (file: File, prev: string) => {
     setPhotoFile(file)
     setPhotoPreview(prev)
+
+    if (!ocrEnabled) return  // OCR disabled in settings — skip
+
     setOcrStatus("analyzing")
     setOcrResult(null)
-
     try {
-      const compressed = await compressImage(prev)   // client-side resize + JPEG
-      const raw = await analyzeMeterPhoto(compressed) // server action → OpenAI Vision
+      const compressed = await compressImage(prev)
+      const raw = await analyzeMeterPhoto(compressed)
       setOcrResult({
         gallons:      raw.gallons,
         confidence:   raw.confidence,
@@ -665,7 +696,7 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
       console.error("[OCR]", err)
       setOcrStatus("error")
     }
-  }, [])
+  }, [ocrEnabled])
 
   // Find selected truck
   const selectedTruck = trucks.find(t => t.id === truckId) ?? null
@@ -767,7 +798,12 @@ export default function SupplyForm({ customers, trucks }: SupplyFormProps) {
                   onChange={handlePhotoChange}
                   onClear={handlePhotoClear}
                 />
-                <OCRDisplay status={ocrStatus} result={ocrResult} />
+                <OCRDisplay
+                  status={ocrStatus}
+                  result={ocrResult}
+                  ocrMinConfidence={ocrMinConfidence}
+                  onUseGallons={(g) => setGallons(g.toFixed(2))}
+                />
               </Card>
 
               {/* Supply info */}

@@ -247,5 +247,8 @@ model SystemSettings {
   alertRedGallons    Decimal  @default(2000)  @db.Decimal(10, 2)   // critical alert ≤ this
   alertYellowGallons Decimal  @default(4000)  @db.Decimal(10, 2)   // warning alert ≤ this
   defaultFuelPrice   Decimal  @default(0)     @db.Decimal(10, 4)   // default price per gallon
+  // OCR settings
+  ocrEnabled         Boolean  @default(true)
+  ocrMinConfidence   Int      @default(90)    // 0-100: min confidence to show auto-fill button
   updatedAt          DateTime @updatedAt
 }

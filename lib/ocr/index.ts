@@ -1,39 +1,58 @@
 /**
- * FuelOps-DR — OCR Engine Entry Point
+ * FuelOps-DR — OCR Engine Factory
  *
- * Singleton factory. Only one provider instance is created per server process.
- * To switch providers: change the instantiation in getOCRProvider() below.
+ * Dynamic provider selection — reads ocrProvider from SystemSettings at call time.
+ * To switch providers: change the setting in /configuracion (no code change needed).
  *
- * Available providers (create the class first, then register here):
- *   OpenAIVisionProvider    ← current
- *   GeminiOCRProvider       ← future
- *   AzureVisionProvider     ← future
- *   GoogleVisionProvider    ← future
- *   ClaudeVisionProvider    ← future
- *   MockOCRProvider         ← for testing
+ * Singleton cache per provider name — one instance per process, no redundant allocations.
+ *
+ * To add a new provider:
+ *   1. Implement OCRProvider in lib/ocr/provider.ts
+ *   2. Add a case in getOCRProvider() below
+ *   3. Add the value to the OcrProvider enum in prisma/schema.prisma
  */
 
-import { OpenAIVisionProvider } from "./provider"
-import type { OCRProvider }     from "./types"
+import { OpenAIVisionProvider, GeminiVisionProvider, MockOCRProvider } from "./provider"
+import type { OCRProvider } from "./types"
 
 export type { OCRResult, OCRProvider } from "./types"
+export type OCRProviderName = "OPENAI" | "GEMINI" | "MOCK"
 
-let _provider: OCRProvider | null = null
+// Per-name singleton cache
+const cache: Partial<Record<OCRProviderName, OCRProvider>> = {}
 
-export function getOCRProvider(): OCRProvider {
-  if (_provider) return _provider
+export function getOCRProvider(name: OCRProviderName): OCRProvider {
+  if (cache[name]) return cache[name]!
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error(
-      "OCR no configurado: OPENAI_API_KEY no está definido.\n" +
-      "Agrega OPENAI_API_KEY en:\n" +
-      "  • Local: archivo .env\n" +
-      "  • Producción: Vercel → Settings → Environment Variables"
-    )
+  let provider: OCRProvider
+
+  switch (name) {
+    case "OPENAI": {
+      const key = process.env.OPENAI_API_KEY
+      if (!key) throw new Error(
+        "OPENAI_API_KEY no está configurado.\n" +
+        "Agrégalo en Vercel → Settings → Environment Variables → OPENAI_API_KEY"
+      )
+      provider = new OpenAIVisionProvider(key)
+      break
+    }
+
+    case "GEMINI": {
+      const key = process.env.GEMINI_API_KEY
+      if (!key) throw new Error(
+        "GEMINI_API_KEY no está configurado.\n" +
+        "Agrégalo en Vercel → Settings → Environment Variables → GEMINI_API_KEY"
+      )
+      provider = new GeminiVisionProvider(key)
+      break
+    }
+
+    case "MOCK":
+    default:
+      provider = new MockOCRProvider()
+      break
   }
 
-  // ← swap this line to change provider globally
-  _provider = new OpenAIVisionProvider(apiKey)
-  return _provider
+  cache[name] = provider
+  return provider
 }

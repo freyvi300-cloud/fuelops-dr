@@ -9,8 +9,9 @@ export interface SystemSettings {
   alertRedGallons:    number
   alertYellowGallons: number
   defaultFuelPrice:   number
+  ocrProvider:        "OPENAI" | "GEMINI" | "MOCK"
   ocrEnabled:         boolean
-  ocrMinConfidence:   number   // 0-100
+  ocrMinConfidence:   number
 }
 
 export const DEFAULTS: SystemSettings = {
@@ -22,6 +23,7 @@ export const DEFAULTS: SystemSettings = {
   alertRedGallons:    2_000,
   alertYellowGallons: 4_000,
   defaultFuelPrice:   0,
+  ocrProvider:        "MOCK",
   ocrEnabled:         true,
   ocrMinConfidence:   90,
 }
@@ -38,6 +40,7 @@ export async function getSystemSettings(): Promise<SystemSettings> {
       create: { id: "singleton" },
       update: {},
     })
+    const provider = row.ocrProvider as "OPENAI" | "GEMINI" | "MOCK"
     return {
       businessName:       row.businessName       ?? DEFAULTS.businessName,
       rnc:                row.rnc,
@@ -47,6 +50,7 @@ export async function getSystemSettings(): Promise<SystemSettings> {
       alertRedGallons:    toNum(row.alertRedGallons,    DEFAULTS.alertRedGallons),
       alertYellowGallons: toNum(row.alertYellowGallons, DEFAULTS.alertYellowGallons),
       defaultFuelPrice:   toNum(row.defaultFuelPrice,   DEFAULTS.defaultFuelPrice),
+      ocrProvider:        ["OPENAI","GEMINI","MOCK"].includes(provider) ? provider : "MOCK",
       ocrEnabled:         row.ocrEnabled         ?? DEFAULTS.ocrEnabled,
       ocrMinConfidence:   row.ocrMinConfidence    ?? DEFAULTS.ocrMinConfidence,
     }

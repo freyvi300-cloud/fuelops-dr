@@ -24,6 +24,7 @@ export interface SettingsFormData {
   alertRedGallons:    number
   alertYellowGallons: number
   defaultFuelPrice:   number
+  ocrProvider:        "OPENAI" | "GEMINI" | "MOCK"
   ocrEnabled:         boolean
   ocrMinConfidence:   number
 }
@@ -135,6 +136,7 @@ export default function SettingsForm({ settings }: Props) {
   const [tankCapacity,       setTankCapacity]       = useState(settings.tankCapacity)
   const [alertRedGallons,    setAlertRedGallons]    = useState(settings.alertRedGallons)
   const [alertYellowGallons, setAlertYellowGallons] = useState(settings.alertYellowGallons)
+  const [ocrProvider,        setOcrProvider]        = useState(settings.ocrProvider)
   const [ocrEnabled,         setOcrEnabled]         = useState(settings.ocrEnabled)
   const [ocrMinConf,         setOcrMinConf]         = useState(settings.ocrMinConfidence)
 
@@ -155,6 +157,7 @@ export default function SettingsForm({ settings }: Props) {
           alertRedGallons:    num("alertRedGallons"),
           alertYellowGallons: num("alertYellowGallons"),
           defaultFuelPrice:   num("defaultFuelPrice"),
+          ocrProvider:        (fd.get("ocrProvider") as "OPENAI" | "GEMINI" | "MOCK") || "MOCK",
           ocrEnabled:         fd.get("ocrEnabled") === "true",
           ocrMinConfidence:   Math.min(100, Math.max(0, parseInt(fd.get("ocrMinConfidence") as string) || 90)),
         })
@@ -312,6 +315,45 @@ export default function SettingsForm({ settings }: Props) {
             title="Lectura automática del medidor (OCR)"
             description="IA que lee los galones desde la foto del medidor en Registrar suministro.">
             <div className="space-y-4">
+
+              {/* Provider selector */}
+              <div>
+                <label className={LABEL}>Proveedor OCR</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { value: "GEMINI", label: "Gemini",  model: "gemini-2.0-flash", req: "GEMINI_API_KEY",  color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-400" },
+                    { value: "OPENAI", label: "OpenAI",  model: "gpt-4o-mini",      req: "OPENAI_API_KEY", color: "text-emerald-700",bg: "bg-emerald-50",border: "border-emerald-400" },
+                    { value: "MOCK",   label: "Mock",    model: "simulado",          req: "Sin API Key",    color: "text-violet-700", bg: "bg-violet-50", border: "border-violet-400" },
+                  ] as const).map(p => {
+                    const active = ocrProvider === p.value
+                    return (
+                      <button key={p.value} type="button"
+                        onClick={() => setOcrProvider(p.value)}
+                        className={cn(
+                          "flex flex-col items-start gap-0.5 p-3 rounded-xl border-2 text-left transition-all",
+                          active ? `${p.border} ${p.bg}` : "border-slate-200 hover:border-slate-300 bg-white"
+                        )}>
+                        <span className={cn("text-sm font-bold", active ? p.color : "text-slate-700")}>
+                          {p.label}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-400">{p.model}</span>
+                        <span className="text-[9px] font-sans text-slate-400">{p.req}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <input type="hidden" name="ocrProvider" value={ocrProvider} />
+                {ocrProvider !== "MOCK" && (
+                  <p className="text-[10px] font-sans text-slate-500 mt-2">
+                    Asegúrate de configurar{" "}
+                    <code className="bg-slate-100 px-1 rounded text-[9px] font-mono">
+                      {ocrProvider === "OPENAI" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"}
+                    </code>{" "}
+                    en Vercel → Settings → Environment Variables.
+                  </p>
+                )}
+              </div>
+
               {/* Enable/Disable */}
               <div>
                 <label className={LABEL}>Estado del OCR</label>

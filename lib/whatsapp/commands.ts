@@ -2,32 +2,38 @@
  * FuelOps-DR — WhatsApp Command Handler (Nova)
  *
  * Comandos conectados a lib/reporting.ts (datos reales de Supabase):
- *   inventario    → getInventoryStatus()
- *   ventas hoy    → getSalesMetrics(getDateRange("today"))
+ *   inventario     → getInventoryStatus()
+ *   ventas hoy     → getSalesMetrics(getDateRange("today"))
  *   clientes deuda → getCustomerDebtReport()
  *
- * Para agregar un nuevo comando:
- *   1. Agrega una función handler abajo
- *   2. Regístrala en COMMANDS con sus alias
- *   3. La función debe devolver string (mensaje de WhatsApp)
+ * Image handling (Phase 3.1):
+ *   1. Send immediate ACK ("Imagen recibida, analizándola...")
+ *   2. Download from Meta CDN
+ *   3. Upload to Supabase Storage (bucket: whatsapp-images)
+ *   4. Save metadata to WhatsAppImage table
+ *   (Phase 3.2: run OCR and auto-register supply)
  */
 
-import { sendTextMessage } from "./client"
+import { sendTextMessage, downloadMedia } from "./client"
+import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath } from "./media"
 import type { IncomingMessage } from "./types"
 import {
   getInventoryStatus,
   getSalesMetrics,
   getCustomerDebtReport,
+  getDashboardKPIs,
   getDateRange,
 } from "@/lib/reporting"
 import { getSystemSettings } from "@/lib/system-settings"
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-const fmtRD  = (n: number) => `RD$${n.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const fmtGal = (n: number) => `${n.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gal`
+const fmtRD  = (n: number) =>
+  `RD$${n.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmtGal = (n: number) =>
+  `${n.toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gal`
 
-// ─── Static response strings ──────────────────────────────────────────────────
+// ─── Static responses ─────────────────────────────────────────────────────────
 
 const GREETING = (name: string | null) =>
   `👋 Hola${name ? `, *${name}*` : ""}! Soy *Nova*, el asistente de *FuelOps-DR*.\n\n` +
@@ -44,26 +50,22 @@ const HELP =
 const NOT_UNDERSTOOD = (text: string) =>
   `❓ No reconozco: _"${text}"_\n\nEscribe *ayuda* para ver los comandos disponibles.`
 
-const NON_TEXT =
+const NON_TEXT_TEXT =
   `👋 Soy *Nova*, el asistente de *FuelOps-DR*.\n\n` +
-  `Solo entiendo texto. Escribe *ayuda* para ver los comandos.`
+  `Solo entiendo texto e imágenes. Escribe *ayuda* para ver los comandos.`
 
 const ERROR_MSG = (cmd: string) =>
-  `⚠ No pude obtener los datos de *${cmd}* en este momento.\n\nIntenta de nuevo en unos segundos o revisa la app.`
+  `⚠ No pude obtener los datos de *${cmd}* en este momento.\n\nIntenta de nuevo en unos segundos.`
 
 // ─── Live command handlers ────────────────────────────────────────────────────
 
 async function cmdInventario(): Promise<string> {
-  const [inv, settings] = await Promise.all([
-    getInventoryStatus(),
-    getSystemSettings(),
-  ])
-
-  const pct    = inv.percentage.toFixed(1)
-  const days   = inv.estimatedDaysLeft === Infinity ? "N/D" : `~${inv.estimatedDaysLeft} días`
-  const alert  = inv.available <= settings.alertRedGallons    ? "🔴 CRÍTICO"
-               : inv.available <= settings.alertYellowGallons ? "🟡 Bajo"
-               : "🟢 Normal"
+  const [inv, settings] = await Promise.all([getInventoryStatus(), getSystemSettings()])
+  const pct   = inv.percentage.toFixed(1)
+  const days  = inv.estimatedDaysLeft === Infinity ? "N/D" : `~${inv.estimatedDaysLeft} días`
+  const alert = inv.available <= settings.alertRedGallons    ? "🔴 CRÍTICO"
+              : inv.available <= settings.alertYellowGallons ? "🟡 Bajo"
+              : "🟢 Normal"
 
   return (
     `⛽ *Inventario de combustible*\n\n` +
@@ -78,13 +80,11 @@ async function cmdInventario(): Promise<string> {
 async function cmdVentasHoy(): Promise<string> {
   const [sales, kpis] = await Promise.all([
     getSalesMetrics(getDateRange("today")),
-    import("@/lib/reporting").then(m => m.getDashboardKPIs()),
+    getDashboardKPIs(),
   ])
-
   if (sales.transactionCount === 0) {
     return `📊 *Ventas de hoy*\n\nAún no hay ventas registradas hoy.`
   }
-
   return (
     `📊 *Ventas de hoy*\n\n` +
     `Total: *${fmtRD(sales.totalAmount)}*\n` +
@@ -99,21 +99,17 @@ async function cmdVentasHoy(): Promise<string> {
 
 async function cmdClientesDeuda(): Promise<string> {
   const debtors = await getCustomerDebtReport()
-
   if (debtors.length === 0) {
     return `✅ *Clientes con deuda*\n\nNo hay clientes con saldo pendiente. ¡Todo al día!`
   }
-
-  const top5 = debtors.slice(0, 5)
+  const top5  = debtors.slice(0, 5)
   const total = debtors.reduce((s, c) => s + c.currentBalance, 0)
-
   const lines = top5.map((c, i) =>
     `${i + 1}. *${c.customerName}*\n` +
-    `   ${fmtRD(c.currentBalance)}${c.overdueInvoices > 0 ? ` ⚠ ${c.overdueInvoices} vencida${c.overdueInvoices > 1 ? "s" : ""}` : ""}`
+    `   ${fmtRD(c.currentBalance)}` +
+    (c.overdueInvoices > 0 ? ` ⚠ ${c.overdueInvoices} vencida${c.overdueInvoices > 1 ? "s" : ""}` : "")
   ).join("\n\n")
-
-  const more = debtors.length > 5 ? `\n\n_...y ${debtors.length - 5} más_` : ""
-
+  const more  = debtors.length > 5 ? `\n\n_...y ${debtors.length - 5} más_` : ""
   return (
     `💰 *Clientes con saldo pendiente*\n\n` +
     lines + more + `\n\n` +
@@ -127,23 +123,23 @@ async function cmdClientesDeuda(): Promise<string> {
 type CommandFn = (msg: IncomingMessage) => Promise<string>
 
 const COMMANDS: Record<string, CommandFn> = {
-  "ayuda":           async () => HELP,
-  "help":            async () => HELP,
-  "menu":            async () => HELP,
-  "menú":            async () => HELP,
+  "ayuda":          async () => HELP,
+  "help":           async () => HELP,
+  "menu":           async () => HELP,
+  "menú":           async () => HELP,
 
-  "inventario":      async () => cmdInventario(),
-  "combustible":     async () => cmdInventario(),
-  "tanque":          async () => cmdInventario(),
+  "inventario":     async () => cmdInventario(),
+  "combustible":    async () => cmdInventario(),
+  "tanque":         async () => cmdInventario(),
 
-  "ventas hoy":      async () => cmdVentasHoy(),
-  "ventas":          async () => cmdVentasHoy(),
-  "ventas del día":  async () => cmdVentasHoy(),
+  "ventas hoy":     async () => cmdVentasHoy(),
+  "ventas":         async () => cmdVentasHoy(),
+  "ventas del día": async () => cmdVentasHoy(),
 
-  "clientes deuda":  async () => cmdClientesDeuda(),
-  "deudas":          async () => cmdClientesDeuda(),
-  "cobros":          async () => cmdClientesDeuda(),
-  "clientes":        async () => cmdClientesDeuda(),
+  "clientes deuda": async () => cmdClientesDeuda(),
+  "deudas":         async () => cmdClientesDeuda(),
+  "cobros":         async () => cmdClientesDeuda(),
+  "clientes":       async () => cmdClientesDeuda(),
 }
 
 const GREETING_KEYWORDS = new Set([
@@ -151,40 +147,120 @@ const GREETING_KEYWORDS = new Set([
   "buenos días","buenas tardes","buenas noches","buen día",
 ])
 
+// ─── Image handler (Phase 3.1) ────────────────────────────────────────────────
+
+/**
+ * Processes a received WhatsApp image:
+ *   1. ACK immediately so the user sees a fast response
+ *   2. Download from Meta CDN (background)
+ *   3. Upload to Supabase Storage (background)
+ *   4. Save metadata to DB (background)
+ *
+ * Phase 3.2 will add OCR here and auto-register the supply.
+ */
+async function handleImageMessage(msg: IncomingMessage): Promise<void> {
+  const who = msg.senderName ?? msg.from
+  console.log(`[Nova/Image] ${who} → IMAGE received, mediaId=${msg.imageId ?? "null"}`)
+
+  if (!msg.imageId) {
+    console.warn(`[Nova/Image] ${who} → image without mediaId, skipping`)
+    await sendTextMessage(msg.from,
+      `📷 Imagen recibida pero sin ID de media. Intenta enviarla de nuevo.`
+    )
+    return
+  }
+
+  // 1. Immediate ACK — user sees response before we do any heavy processing
+  await sendTextMessage(msg.from,
+    `📷 *Imagen recibida correctamente.*\nEstoy analizándola...`
+  )
+  console.log(`[Nova/Image] ${who} → ACK sent`)
+
+  // 2. Process asynchronously — do NOT await so the webhook handler can return 200 fast
+  processImageAsync(msg).catch(err =>
+    console.error(`[Nova/Image] ${who} → processImageAsync FAILED:`,
+      err instanceof Error ? err.message : err)
+  )
+}
+
+async function processImageAsync(msg: IncomingMessage): Promise<void> {
+  const who = msg.senderName ?? msg.from
+
+  // Step 1: Download from Meta
+  console.log(`[Nova/Image] ${who} → Step 1: downloading mediaId=${msg.imageId}`)
+  const { buffer, mimeType, filename } = await downloadMedia(msg.imageId!)
+  console.log(`[Nova/Image] ${who} → Step 1 done: ${mimeType} ${buffer.length}B ${filename}`)
+
+  // Step 2: Upload to Supabase Storage
+  const storagePath = buildStoragePath(msg.from, filename)
+  console.log(`[Nova/Image] ${who} → Step 2: uploading to ${storagePath}`)
+  const storageUrl = await uploadToSupabase(buffer, mimeType, storagePath)
+  console.log(`[Nova/Image] ${who} → Step 2 done: ${storageUrl}`)
+
+  // Step 3: Save metadata to DB
+  console.log(`[Nova/Image] ${who} → Step 3: saving to DB`)
+  await saveWhatsAppImageRecord({
+    mediaId:     msg.imageId!,
+    senderPhone: msg.from,
+    senderName:  msg.senderName,
+    storageUrl,
+    mimeType,
+    caption:     null,   // Phase 3.2: extract from raw payload
+  })
+  console.log(`[Nova/Image] ${who} → Step 3 done ✅ all steps complete`)
+
+  // Phase 3.2 placeholder: run OCR here
+  // const ocrResult = await analyzeMeterPhoto(buffer)
+  // if (ocrResult.gallons && ocrResult.confidence >= MIN_CONFIDENCE) {
+  //   await sendTextMessage(msg.from, `⛽ Medidor detectado: ${ocrResult.gallons} gal (${ocrResult.confidence}% confianza)`)
+  // }
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function handleIncomingMessage(msg: IncomingMessage): Promise<void> {
   const who = msg.senderName ?? msg.from
   console.log(`[Nova] ${who} → type=${msg.type} text="${msg.text ?? "(non-text)"}"`)
 
+  // ── Image messages ─────────────────────────────────────────────────────────
+  if (msg.type === "image") {
+    await handleImageMessage(msg)
+    return
+  }
+
+  // ── Non-text, non-image messages ───────────────────────────────────────────
   if (msg.type !== "text" || !msg.text) {
-    await sendTextMessage(msg.from, NON_TEXT)
+    await sendTextMessage(msg.from, NON_TEXT_TEXT)
     return
   }
 
   const normalised = msg.text.toLowerCase().trim()
 
+  // ── Greetings ──────────────────────────────────────────────────────────────
   if (GREETING_KEYWORDS.has(normalised)) {
     console.log(`[Nova] ${who} → greeting`)
     await sendTextMessage(msg.from, GREETING(msg.senderName))
     return
   }
 
+  // ── Commands ───────────────────────────────────────────────────────────────
   const handler = COMMANDS[normalised]
   if (handler) {
-    console.log(`[Nova] ${who} → command: "${normalised}"`)
     const start = Date.now()
+    console.log(`[Nova] ${who} → command: "${normalised}"`)
     try {
       const response = await handler(msg)
-      console.log(`[Nova] ${who} ← "${normalised}" replied in ${Date.now() - start}ms`)
+      console.log(`[Nova] ${who} ← "${normalised}" in ${Date.now() - start}ms`)
       await sendTextMessage(msg.from, response)
     } catch (err) {
-      console.error(`[Nova] ${who} ← "${normalised}" FAILED:`, err instanceof Error ? err.message : err)
+      console.error(`[Nova] ${who} ← "${normalised}" FAILED:`,
+        err instanceof Error ? err.message : err)
       await sendTextMessage(msg.from, ERROR_MSG(normalised)).catch(() => {})
     }
     return
   }
 
+  // ── Unknown ────────────────────────────────────────────────────────────────
   console.log(`[Nova] ${who} → unknown: "${normalised}"`)
   await sendTextMessage(msg.from, NOT_UNDERSTOOD(msg.text))
 }

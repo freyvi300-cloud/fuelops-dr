@@ -79,9 +79,54 @@ export async function markMessageAsRead(messageId: string): Promise<void> {
   }
 }
 
-// ─── Download media (future: OCR) ─────────────────────────────────────────────
+// ─── Download media ───────────────────────────────────────────────────────────
+
+export interface MediaDownload {
+  buffer:   Buffer
+  mimeType: string   // "image/jpeg", "image/png", etc.
+  filename: string   // "{mediaId}.jpg"
+  fileSize: number   // bytes
+}
 
 /**
- * TODO Phase 3: download image from WhatsApp and pass to OCR
- * export async function downloadMedia(mediaId: string): Promise<Buffer> { ... }
+ * Downloads an image (or any media) from WhatsApp Cloud API.
+ * Two-step: first GET /{mediaId} to get the CDN URL, then GET that URL.
+ * Both requests require the Bearer token.
  */
+export async function downloadMedia(mediaId: string): Promise<MediaDownload> {
+  const { token } = credentials()
+
+  // Step 1 — resolve media URL from media ID
+  console.log(`[WhatsApp] downloadMedia: resolving id=${mediaId}`)
+  const metaRes = await fetch(`${BASE}/${mediaId}`, {
+    headers: { "Authorization": `Bearer ${token}` },
+  })
+  if (!metaRes.ok) {
+    const err = await metaRes.text().catch(() => "unknown")
+    throw new Error(`WhatsApp media resolve ${metaRes.status}: ${err}`)
+  }
+  const meta = await metaRes.json() as {
+    url:       string
+    mime_type: string
+    file_size: number
+    sha256:    string
+    id:        string
+  }
+  console.log(`[WhatsApp] downloadMedia: mime=${meta.mime_type} size=${meta.file_size}B url=...`)
+
+  // Step 2 — download the actual file from CDN
+  const imgRes = await fetch(meta.url, {
+    headers: { "Authorization": `Bearer ${token}` },
+  })
+  if (!imgRes.ok) {
+    throw new Error(`WhatsApp CDN download ${imgRes.status}`)
+  }
+  const arrayBuffer = await imgRes.arrayBuffer()
+  const buffer      = Buffer.from(arrayBuffer)
+  console.log(`[WhatsApp] downloadMedia: downloaded ${buffer.length} bytes ✅`)
+
+  const ext      = (meta.mime_type.split("/")[1] ?? "jpg").split(";")[0]
+  const filename = `${mediaId}.${ext}`
+
+  return { buffer, mimeType: meta.mime_type, filename, fileSize: buffer.length }
+}

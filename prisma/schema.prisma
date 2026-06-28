@@ -259,3 +259,19 @@ enum OcrProvider {
   GEMINI
   MOCK
 }
+
+// ─── WhatsApp Images ──────────────────────────────────────────────────────────
+// Stores metadata for every image received via WhatsApp.
+// The raw image is in Supabase Storage (bucket: whatsapp-images).
+// Phase 3.2: this record will be linked to a Supply when OCR confirms the meter.
+
+model WhatsAppImage {
+  id          String   @id @default(cuid())
+  mediaId     String   @unique            // WhatsApp media ID from Meta
+  senderPhone String                      // wa_id — sender's phone (no +)
+  senderName  String?                     // from contacts[] in webhook payload
+  storageUrl  String                      // Supabase Storage public URL
+  mimeType    String?                     // "image/jpeg", "image/png", etc.
+  caption     String?                     // optional caption from sender
+  createdAt   DateTime @default(now())
+}

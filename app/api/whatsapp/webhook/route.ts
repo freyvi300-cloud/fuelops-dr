@@ -1,14 +1,11 @@
 /**
- * FuelOps-DR — WhatsApp Webhook API Route
+ * FuelOps-DR — WhatsApp Webhook
+ * GET  → Meta verification
+ * POST → incoming messages from WhatsApp
  *
- * Configure in Meta Business Suite:
- *   Webhook URL:   https://your-app.vercel.app/api/whatsapp/webhook
- *   Verify Token:  value of WHATSAPP_VERIFY_TOKEN env var
- *   Subscriptions: messages
- *
- * Environment variables required (Vercel → Settings → Environment Variables):
- *   WHATSAPP_VERIFY_TOKEN    — any secret string you choose; paste it in Meta too
- *   WHATSAPP_ACCESS_TOKEN    — from Meta → WhatsApp → API Setup
+ * Required env vars (Vercel → Settings → Environment Variables):
+ *   WHATSAPP_VERIFY_TOKEN    — token you set in Meta webhook settings
+ *   WHATSAPP_ACCESS_TOKEN    — Meta API access token
  *   WHATSAPP_PHONE_NUMBER_ID — from Meta → WhatsApp → API Setup
  */
 
@@ -28,62 +25,102 @@ export async function GET(req: NextRequest) {
 
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN
 
+  console.log("[WhatsApp GET] Verification attempt:", { mode, token, challenge })
+
   if (!verifyToken) {
-    console.error("[WhatsApp Webhook] WHATSAPP_VERIFY_TOKEN is not set")
-    return new Response("Server misconfigured", { status: 500 })
+    console.error("[WhatsApp GET] ❌ WHATSAPP_VERIFY_TOKEN is not set in environment")
+    return new Response("Server misconfigured — WHATSAPP_VERIFY_TOKEN missing", { status: 500 })
   }
 
   if (mode === "subscribe" && token === verifyToken) {
-    console.log("[WhatsApp Webhook] ✅ Webhook verified by Meta")
-    // Meta expects the challenge string as plain text, status 200
+    console.log("[WhatsApp GET] ✅ Webhook verified successfully")
     return new Response(challenge ?? "", { status: 200 })
   }
 
-  console.warn("[WhatsApp Webhook] ❌ Verification failed", { mode, token })
+  console.warn("[WhatsApp GET] ❌ Verification failed", {
+    expected: verifyToken,
+    received: token,
+    mode,
+  })
   return new Response("Forbidden", { status: 403 })
 }
 
-// ─── POST — incoming events ───────────────────────────────────────────────────
+// ─── POST — incoming events from Meta ────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Log #1 — the very first thing, proves the function was invoked
+  console.log("[WhatsApp POST] ▶ Request received at", new Date().toISOString())
+  console.log("[WhatsApp POST] Headers:", Object.fromEntries(req.headers))
+
+  // Return 200 immediately registered — parse + handle async below
+  // (Meta retries if it doesn't get 200 within 20 seconds)
+
+  let rawBody = ""
+  try {
+    rawBody = await req.text()
+    console.log("[WhatsApp POST] Raw body length:", rawBody.length, "chars")
+    console.log("[WhatsApp POST] Raw body:", rawBody.slice(0, 2000)) // first 2000 chars
+  } catch (err) {
+    console.error("[WhatsApp POST] ❌ Failed to read body:", err)
+    return NextResponse.json({ status: "error", error: "Failed to read body" }, { status: 200 })
+  }
+
   let body: unknown
   try {
-    body = await req.json()
+    body = JSON.parse(rawBody)
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
+    console.error("[WhatsApp POST] ❌ Body is not valid JSON:", rawBody.slice(0, 200))
+    return NextResponse.json({ status: "error", error: "Invalid JSON" }, { status: 200 })
   }
 
   const payload = body as WhatsAppWebhookPayload
+  console.log("[WhatsApp POST] object field:", payload.object)
+  console.log("[WhatsApp POST] entry count:", payload.entry?.length ?? 0)
 
-  // Meta sends other object types; ignore them
+  // Meta sends other object types (status updates for templates, etc.) — ignore them
   if (payload.object !== "whatsapp_business_account") {
+    console.log("[WhatsApp POST] Ignoring non-whatsapp object:", payload.object)
     return NextResponse.json({ status: "ignored" }, { status: 200 })
   }
 
-  // Parse all incoming messages
-  const messages = parseWebhookPayload(payload)
-  console.log(`[WhatsApp Webhook] Received ${messages.length} message(s)`)
+  // Log entry details
+  for (const entry of payload.entry ?? []) {
+    console.log("[WhatsApp POST] Entry ID:", entry.id, "| Changes:", entry.changes?.length ?? 0)
+    for (const change of entry.changes ?? []) {
+      console.log("[WhatsApp POST] Change field:", change.field, "| messages:", change.value?.messages?.length ?? 0, "| statuses:", change.value?.statuses?.length ?? 0)
+    }
+  }
+
+  // Parse messages
+  let messages
+  try {
+    messages = parseWebhookPayload(payload)
+    console.log("[WhatsApp POST] Parsed", messages.length, "message(s)")
+  } catch (err) {
+    console.error("[WhatsApp POST] ❌ parseWebhookPayload threw:", err)
+    return NextResponse.json({ status: "parse_error" }, { status: 200 })
+  }
 
   // Process each message
-  // We await each one but catch errors so a single failure doesn't block others
   for (const msg of messages) {
-    console.log(
-      `[WhatsApp Webhook] Processing: from=${msg.from} type=${msg.type} ` +
-      `text="${msg.text ?? "(non-text)"}" msgId=${msg.messageId}`
-    )
+    console.log("[WhatsApp POST] Processing message:", {
+      from:      msg.from,
+      type:      msg.type,
+      text:      msg.text,
+      messageId: msg.messageId,
+      timestamp: msg.timestamp,
+    })
 
-    // 1. Mark as read (blue ticks) — non-critical, swallow failures
     await markMessageAsRead(msg.messageId).catch(err =>
-      console.warn("[WhatsApp Webhook] markAsRead failed:", err.message)
+      console.warn("[WhatsApp POST] markAsRead failed:", err.message)
     )
 
-    // 2. Handle message and send reply — catch so Meta doesn't retry
     await handleIncomingMessage(msg).catch(err =>
-      console.error("[WhatsApp Webhook] handleIncomingMessage failed:", err.message)
+      console.error("[WhatsApp POST] handleIncomingMessage failed:", err.message, err.stack)
     )
   }
 
-  // IMPORTANT: Always return 200 to Meta.
-  // If we return 4xx/5xx, Meta will retry aggressively.
+  console.log("[WhatsApp POST] ✅ Done — returning 200")
+  // CRITICAL: always 200 — Meta retries on any other status
   return NextResponse.json({ status: "ok" }, { status: 200 })
 }

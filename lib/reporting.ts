@@ -508,6 +508,307 @@ export async function getInventoryOverTime(range: DateRange): Promise<DailyPoint
 // FULL REPORT BUILDER
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD 2.0 — TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Default tank capacity. TODO Phase 2: read from SystemSettings model */
+const DEFAULT_TANK_CAPACITY = 20_000 // gallons
+
+export interface InventoryStatus {
+  available:           number
+  tankCapacity:        number
+  percentage:          number
+  consumedToday:       number
+  consumedThisMonth:   number
+  avgDailyConsumption: number
+  estimatedDaysLeft:   number   // Infinity when no consumption data
+}
+
+export interface ActivityItem {
+  id:        string
+  time:      string            // ISO string
+  type:      "supply" | "payment"
+  customer:  string
+  truck:     string | null     // truck code
+  amount:    number
+  gallons:   number | null     // only for supplies
+  status:    string            // paymentType or paymentMethod
+  reference: string            // invoice number
+}
+
+export type AlertLevel = "critical" | "warning" | "ok"
+
+export interface Alert {
+  level:   AlertLevel
+  title:   string
+  message: string
+  link:    string
+  count?:  number
+}
+
+export interface TopCustomer {
+  customerId:   string
+  customerName: string
+  gallons:      number
+  revenue:      number
+  rank:         number
+}
+
+export interface DashboardExtendedKPIs extends DashboardKPIs {
+  pendingBalance: number   // SUM(balanceDue) of open invoices
+}
+
+export interface DashboardData {
+  kpis:          DashboardExtendedKPIs
+  inventory:     InventoryStatus
+  activity:      ActivityItem[]
+  alerts:        Alert[]
+  topCustomers:  TopCustomer[]
+  customerDebt:  CustomerDebtItem[]    // top 8 debtors
+  truckActivity: TruckActivityItem[]   // top 6 by gallons
+  charts: {
+    salesLast30:      DailyPoint[]
+    collectionsLast30:DailyPoint[]
+    gallonsLast30:    DailyPoint[]
+    inventoryLast30:  DailyPoint[]
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD 2.0 — FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function getInventoryStatus(): Promise<InventoryStatus> {
+  const now        = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const daysElapsed = Math.max(1, now.getDate())
+
+  const [allMovements, todayOut, monthOut] = await Promise.all([
+    prisma.inventoryMovement.findMany({ select: { type: true, gallons: true } }),
+    prisma.inventoryMovement.aggregate({
+      where: { type: "OUT", movedAt: { gte: todayStart } },
+      _sum:  { gallons: true },
+    }),
+    prisma.inventoryMovement.aggregate({
+      where: { type: "OUT", movedAt: { gte: monthStart } },
+      _sum:  { gallons: true },
+    }),
+  ])
+
+  const available           = Math.max(0, computeInventoryBalance(allMovements))
+  const consumedToday       = todayOut._sum.gallons?.toNumber()  ?? 0
+  const consumedThisMonth   = monthOut._sum.gallons?.toNumber()  ?? 0
+  const avgDailyConsumption = consumedThisMonth / daysElapsed
+  const percentage          = DEFAULT_TANK_CAPACITY > 0
+    ? Math.min(100, (available / DEFAULT_TANK_CAPACITY) * 100)
+    : 0
+  const estimatedDaysLeft   = avgDailyConsumption > 0
+    ? Math.floor(available / avgDailyConsumption)
+    : Infinity
+
+  return {
+    available, tankCapacity: DEFAULT_TANK_CAPACITY, percentage,
+    consumedToday, consumedThisMonth, avgDailyConsumption, estimatedDaysLeft,
+  }
+}
+
+export async function getActivityFeed(limit = 20): Promise<ActivityItem[]> {
+  const now        = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  const [supplies, payments] = await Promise.all([
+    prisma.supply.findMany({
+      where:   { suppliedAt: { gte: todayStart } },
+      include: {
+        customer: { select: { name: true } },
+        truck:    { select: { code: true } },
+        invoice:  { select: { invoiceNumber: true } },
+      },
+      orderBy: { suppliedAt: "desc" },
+      take:    limit,
+    }),
+    prisma.payment.findMany({
+      where:   { paymentDate: { gte: todayStart } },
+      include: {
+        customer: { select: { name: true } },
+        invoice:  { select: { invoiceNumber: true } },
+      },
+      orderBy: { paymentDate: "desc" },
+      take:    limit,
+    }),
+  ])
+
+  const items: ActivityItem[] = [
+    ...supplies.map(s => ({
+      id:        s.id,
+      time:      s.suppliedAt.toISOString(),
+      type:      "supply" as const,
+      customer:  s.customer.name,
+      truck:     s.truck?.code ?? null,
+      amount:    s.total.toNumber(),
+      gallons:   s.gallons.toNumber(),
+      status:    s.paymentType,
+      reference: s.invoice?.invoiceNumber ?? "",
+    })),
+    ...payments.map(p => ({
+      id:        p.id,
+      time:      p.paymentDate.toISOString(),
+      type:      "payment" as const,
+      customer:  p.customer.name,
+      truck:     null,
+      amount:    p.amount.toNumber(),
+      gallons:   null,
+      status:    p.paymentMethod,
+      reference: p.invoice?.invoiceNumber ?? "",
+    })),
+  ]
+
+  return items
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+    .slice(0, limit)
+}
+
+/** Pure function — no DB queries. Call after fetching kpis + inventory. */
+export function generateAlerts(
+  kpis: DashboardExtendedKPIs,
+  inventory: InventoryStatus,
+): Alert[] {
+  const alerts: Alert[] = []
+
+  // CRITICAL: inventory < 15%
+  if (inventory.percentage < 15) {
+    const days = inventory.estimatedDaysLeft === Infinity ? "" : ` Estimado: ${inventory.estimatedDaysLeft} días restantes.`
+    alerts.push({
+      level:   "critical",
+      title:   "Inventario crítico",
+      message: `Solo quedan ${inventory.available.toFixed(0)} gal (${inventory.percentage.toFixed(1)}% del tanque).${days}`,
+      link:    "/inventario",
+    })
+  } else if (inventory.percentage < 30) {
+    alerts.push({
+      level:   "warning",
+      title:   "Inventario bajo",
+      message: `Combustible al ${inventory.percentage.toFixed(1)}%. Considera reabastecer pronto.`,
+      link:    "/inventario",
+    })
+  }
+
+  // WARNING: overdue invoices
+  if (kpis.invoicesOverdue > 0) {
+    alerts.push({
+      level:   "warning",
+      title:   `${kpis.invoicesOverdue} factura${kpis.invoicesOverdue !== 1 ? "s" : ""} vencida${kpis.invoicesOverdue !== 1 ? "s" : ""}`,
+      message: "Hay facturas con fecha de vencimiento expirada. Contacta a los clientes.",
+      link:    "/facturas?status=OVERDUE",
+      count:   kpis.invoicesOverdue,
+    })
+  }
+
+  // WARNING: high pending balance
+  if (kpis.pendingBalance > 500_000) {
+    alerts.push({
+      level:   "warning",
+      title:   "Alto saldo pendiente por cobrar",
+      message: `RD$${kpis.pendingBalance.toLocaleString("es-DO", { maximumFractionDigits: 0 })} en cuentas abiertas. Revisa el estado de cobros.`,
+      link:    "/cobros",
+    })
+  }
+
+  // All clear
+  if (alerts.length === 0) {
+    alerts.push({
+      level:   "ok",
+      title:   "Todo funcionando correctamente",
+      message: "No hay alertas activas. El negocio opera con normalidad.",
+      link:    "/reportes",
+    })
+  }
+
+  return alerts
+}
+
+export async function getTopCustomers(
+  range: DateRange,
+  limit = 10,
+): Promise<TopCustomer[]> {
+  const rows = await prisma.supply.findMany({
+    where:  { suppliedAt: { gte: range.from, lte: range.to } },
+    select: { customerId: true, total: true, gallons: true },
+  })
+  if (rows.length === 0) return []
+
+  const map: Record<string, { revenue: number; gallons: number }> = {}
+  for (const r of rows) {
+    if (!map[r.customerId]) map[r.customerId] = { revenue: 0, gallons: 0 }
+    map[r.customerId].revenue  += r.total.toNumber()
+    map[r.customerId].gallons  += r.gallons.toNumber()
+  }
+
+  const ids = Object.keys(map)
+  const customers = await prisma.customer.findMany({
+    where:  { id: { in: ids } },
+    select: { id: true, name: true },
+  })
+  const nameMap: Record<string, string> = {}
+  for (const c of customers) nameMap[c.id] = c.name
+
+  return Object.entries(map)
+    .map(([id, v]) => ({ customerId: id, customerName: nameMap[id] ?? "—", ...v, rank: 0 }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit)
+    .map((item, i) => ({ ...item, rank: i + 1 }))
+}
+
+/** Dashboard 2.0 entry point — ONE call, everything in parallel */
+export async function buildDashboardData(): Promise<DashboardData> {
+  const now      = new Date()
+  const last30: DateRange = {
+    from:  new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+    to:    now,
+    label: "Últimos 30 días",
+  }
+  const monthRange = getDateRange("month")
+
+  const [
+    kpis, inventory, activity,
+    topCustomers, customerDebt, truckActivity,
+    salesLast30, collectionsLast30, gallonsLast30, inventoryLast30,
+    pendingBalanceAgg,
+  ] = await Promise.all([
+    getDashboardKPIs(),
+    getInventoryStatus(),
+    getActivityFeed(20),
+    getTopCustomers(monthRange, 10),
+    getCustomerDebtReport(),
+    getTruckActivityReport(monthRange),
+    getSalesByDay(last30),
+    getCollectionsByDay(last30),
+    getGallonsByDay(last30),
+    getInventoryOverTime(last30),
+    prisma.invoice.aggregate({
+      where: { status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE] } },
+      _sum:  { balanceDue: true },
+    }),
+  ])
+
+  const pendingBalance = pendingBalanceAgg._sum.balanceDue?.toNumber() ?? 0
+  const extKpis: DashboardExtendedKPIs = { ...kpis, pendingBalance }
+  const alerts = generateAlerts(extKpis, inventory)
+
+  return {
+    kpis:          extKpis,
+    inventory,
+    activity,
+    alerts,
+    topCustomers,
+    customerDebt:  customerDebt.slice(0, 8),
+    truckActivity: truckActivity.slice(0, 6),
+    charts: { salesLast30, collectionsLast30, gallonsLast30, inventoryLast30 },
+  }
+}
+
 /** Main entry point — calls all computations in parallel */
 export async function buildFullReport(period: Period): Promise<FullReport> {
   const range = getDateRange(period)

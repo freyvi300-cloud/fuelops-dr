@@ -144,11 +144,14 @@ export async function confirmSupply(data: SupplyFormData): Promise<ConfirmedSupp
     })
 
     // 3. Update customer balances
+    // pendingGallons only increments for CREDIT — CASH is already paid
     await tx.customer.update({
       where: { id: customerId },
       data: {
-        pendingGallons: { increment: gallons },
-        ...(paymentType === "CREDIT" && { currentBalance: { increment: total } }),
+        ...(paymentType === "CREDIT" && {
+          pendingGallons: { increment: gallons },
+          currentBalance: { increment: total },
+        }),
       },
     })
 

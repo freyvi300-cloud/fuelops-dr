@@ -266,12 +266,33 @@ function InvoiceDetailModal({
             </div>
           )}
 
-          {/* ── Future: payment history placeholder ───────────────────────── */}
-          <div className="px-4 py-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-            <p className="text-[10px] font-sans font-semibold text-slate-400 uppercase tracking-wider mb-1">Historial de pagos</p>
-            <p className="text-xs font-sans text-slate-400">
-              El historial de pagos estará disponible cuando se implemente el módulo de Cobros.
-            </p>
+          {/* ── Payment history ───────────────────────────────────────────── */}
+          <div>
+            <p className="text-[10px] font-sans font-semibold text-slate-400 uppercase tracking-wider mb-2">Historial de pagos</p>
+            {detail.payments.length === 0 ? (
+              <div className="px-4 py-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                <p className="text-xs font-sans text-slate-400">No hay pagos registrados para esta factura.</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-100 divide-y divide-slate-50">
+                {detail.payments.map(p => (
+                  <div key={p.id} className="flex items-center justify-between px-4 py-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] font-bold text-[#1a3fa0]">{p.paymentNumber}</span>
+                        <span className="text-[10px] text-slate-400">·</span>
+                        <span className="text-[10px] text-slate-500">{p.paymentMethod.replace("_", " ")}</span>
+                      </div>
+                      <p className="text-[11px] font-sans text-slate-400 mt-0.5">
+                        {new Date(p.paymentDate).toLocaleString("es-DO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {p.reference && ` · ${p.reference}`}
+                      </p>
+                    </div>
+                    <span className="font-bold text-emerald-600 text-sm">+{fmtRD(p.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

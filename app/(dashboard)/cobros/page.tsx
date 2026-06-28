@@ -1,25 +1,21 @@
-import { CircleDollarSign } from "lucide-react"
-import PageShell from "@/components/ui/page-shell"
+import { getPayments, getPaymentStats } from "@/app/actions/payments"
+import { getCustomers }                 from "@/app/actions/customers"
+import PaymentsClient                   from "@/components/cobros/payments-client"
 
-// TODO: Build Collections module
-// - Payment model: customerId, amount, method (cash/transfer/check), reference,
-//   registeredBy, paymentDate, notes
-// - PaymentAllocation model: paymentId, invoiceId, amountApplied
-//   (one payment can cover multiple invoices — FIFO auto-allocation)
-// - When payment registered: decrement customer.currentBalance
-// - Show aging report: 0-30 / 31-60 / 61-90 / 90+ days overdue
-// - PDF receipt generation per payment
+export const dynamic = "force-dynamic"
 
-export default function CobrosPage() {
+export default async function CobrosPage() {
+  const [payments, stats, customers] = await Promise.all([
+    getPayments(),
+    getPaymentStats(),
+    getCustomers(),
+  ])
+
   return (
-    <PageShell
-      title="Cobros"
-      description="Registra los pagos recibidos de clientes y gestiona cuentas por cobrar."
-      actionLabel="Registrar cobro"
-      icon={CircleDollarSign}
-      emptyIcon={CircleDollarSign}
-      emptyTitle="No hay cobros registrados"
-      emptyDescription="Cuando un cliente realice un pago, regístralo aquí para actualizar su saldo automáticamente y generar el recibo de pago."
+    <PaymentsClient
+      payments={payments}
+      stats={stats}
+      customers={customers}
     />
   )
 }

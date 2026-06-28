@@ -40,6 +40,15 @@ export interface SerializedInvoice {
   updatedAt:     string
 }
 
+export interface InvoicePaymentEntry {
+  id:            string
+  paymentNumber: string
+  amount:        number
+  paymentMethod: string
+  reference:     string | null
+  paymentDate:   string
+}
+
 export interface SerializedInvoiceDetail extends SerializedInvoice {
   customerAddress: string | null
   customerRnc:     string | null
@@ -49,6 +58,7 @@ export interface SerializedInvoiceDetail extends SerializedInvoice {
   meterPhotoB64:   string | null   // heavy — only loaded for detail view
   supplyNotes:     string | null
   supplyId:        string
+  payments:        InvoicePaymentEntry[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -168,6 +178,7 @@ export async function getInvoiceById(id: string): Promise<SerializedInvoiceDetai
       customer: true,
       truck:    true,
       supply:   true,
+      payments: { orderBy: { paymentDate: "asc" } },
     },
   })
   if (!r) return null
@@ -187,5 +198,31 @@ export async function getInvoiceById(id: string): Promise<SerializedInvoiceDetai
     meterPhotoB64:   r.supply.meterPhotoB64,
     supplyNotes:     r.supply.notes,
     supplyId:        r.supply.id,
+    payments:        r.payments.map(p => ({
+      id:            p.id,
+      paymentNumber: p.paymentNumber,
+      amount:        p.amount.toNumber(),
+      paymentMethod: p.paymentMethod,
+      reference:     p.reference,
+      paymentDate:   p.paymentDate.toISOString(),
+    })),
   }
+}
+
+/** Used by the payment registration form to show pending invoices for a customer */
+export async function getCustomerPendingInvoices(customerId: string): Promise<SerializedInvoice[]> {
+  await markOverdueInvoices()
+  const rows = await prisma.invoice.findMany({
+    where: {
+      customerId,
+      status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE] },
+    },
+    include: {
+      customer: { select: { name: true, phone: true } },
+      truck:    { select: { code: true, name: true } },
+      supply:   { select: { gallons: true, pricePerGallon: true, paymentType: true } },
+    },
+    orderBy: { issueDate: "asc" },
+  })
+  return rows.map(serializeInvoice)
 }

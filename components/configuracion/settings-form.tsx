@@ -11,6 +11,7 @@ import { cn }                  from "@/lib/utils"
 // which is server-only and cannot be bundled for the browser.
 // Type is defined inline below.
 import { updateSystemSettings } from "@/app/actions/settings"
+import type { SavedSettings }   from "@/app/actions/settings"
 
 // ─── Inline type — no server-only imports ─────────────────────────────────────
 // This mirrors SystemSettings from lib/system-settings.ts but lives in the
@@ -129,10 +130,10 @@ interface Props { settings: SettingsFormData }
 export default function SettingsForm({ settings }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [saved,  setSaved]  = useState(false)
-  const [error,  setError]  = useState<string | null>(null)
+  const [savedData, setSavedData] = useState<SavedSettings | null>(null)
+  const [error,     setError]     = useState<string | null>(null)
 
-  // Controlled state for the live preview
+  // Controlled state — these drive both the live preview AND the form values
   const [tankCapacity,       setTankCapacity]       = useState(settings.tankCapacity)
   const [alertRedGallons,    setAlertRedGallons]    = useState(settings.alertRedGallons)
   const [alertYellowGallons, setAlertYellowGallons] = useState(settings.alertYellowGallons)
@@ -142,30 +143,45 @@ export default function SettingsForm({ settings }: Props) {
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    setSaved(false); setError(null)
-    const fd  = new FormData(e.currentTarget)
-    const num = (k: string) => Math.max(0, parseFloat(fd.get(k) as string) || 0)
+    setSavedData(null); setError(null)
+    const fd = new FormData(e.currentTarget)
+
+    // Safe number parser — throws if field is missing or NaN
+    function numField(key: string, label: string): number {
+      const raw = fd.get(key)
+      if (raw === null || raw === "") throw new Error(`Campo "${label}" no encontrado en el formulario. Intenta recargar la página.`)
+      const n = parseFloat(raw as string)
+      if (isNaN(n)) throw new Error(`"${label}" tiene un valor inválido: "${raw}".`)
+      return n
+    }
+
+    // Debug: log FormData contents (visible in browser console)
+    console.log("[Settings] FormData:", Object.fromEntries(fd.entries()))
 
     startTransition(async () => {
       try {
-        await updateSystemSettings({
-          businessName:       (fd.get("businessName") as string).trim(),
-          rnc:                (fd.get("rnc") as string).trim()     || null,
-          phone:              (fd.get("phone") as string).trim()   || null,
-          address:            (fd.get("address") as string).trim() || null,
-          tankCapacity:       num("tankCapacity"),
-          alertRedGallons:    num("alertRedGallons"),
-          alertYellowGallons: num("alertYellowGallons"),
-          defaultFuelPrice:   num("defaultFuelPrice"),
-          ocrProvider:        (fd.get("ocrProvider") as "OPENAI" | "GEMINI" | "MOCK") || "MOCK",
+        const result = await updateSystemSettings({
+          businessName:       ((fd.get("businessName") as string) ?? "").trim(),
+          rnc:                ((fd.get("rnc") as string) ?? "").trim()     || null,
+          phone:              ((fd.get("phone") as string) ?? "").trim()   || null,
+          address:            ((fd.get("address") as string) ?? "").trim() || null,
+          tankCapacity:       numField("tankCapacity",       "Capacidad total"),
+          alertRedGallons:    numField("alertRedGallons",    "Alerta roja"),
+          alertYellowGallons: numField("alertYellowGallons", "Alerta amarilla"),
+          defaultFuelPrice:   parseFloat((fd.get("defaultFuelPrice") as string) ?? "0") || 0,
+          ocrProvider:        ((fd.get("ocrProvider") as string) || "MOCK") as "OPENAI" | "GEMINI" | "MOCK",
           ocrEnabled:         fd.get("ocrEnabled") === "true",
-          ocrMinConfidence:   Math.min(100, Math.max(0, parseInt(fd.get("ocrMinConfidence") as string) || 90)),
+          ocrMinConfidence:   Math.min(100, Math.max(0, parseInt((fd.get("ocrMinConfidence") as string) ?? "90") || 90)),
         })
-        setSaved(true)
+
+        // Show what was ACTUALLY saved in the DB — the user can verify
+        setSavedData(result)
         router.refresh()
-        setTimeout(() => setSaved(false), 4000)
+        setTimeout(() => setSavedData(null), 8000)
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error al guardar la configuración.")
+        const msg = err instanceof Error ? err.message : "Error al guardar la configuración."
+        setError(msg)
+        console.error("[Settings] Save error:", msg)
       }
     })
   }
@@ -194,18 +210,33 @@ export default function SettingsForm({ settings }: Props) {
           </button>
         </div>
 
-        {saved && (
-          <div className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <p className="text-xs font-sans text-emerald-700 font-semibold">
-              Configuración guardada. El Dashboard y las alertas han sido actualizados.
+        {/* Success — shows ACTUAL values from DB, not what was typed */}
+        {savedData && (
+          <div className="mt-3 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <p className="text-xs font-sans text-emerald-700 font-bold">
+                Guardado y verificado desde la base de datos:
+              </p>
+            </div>
+            <p className="text-[11px] font-mono text-emerald-700 pl-6">
+              Tanque: {savedData.tankCapacity.toLocaleString()} gal
+              {" · "}🔴 ≤ {savedData.alertRedGallons.toLocaleString()} gal
+              {" · "}🟡 ≤ {savedData.alertYellowGallons.toLocaleString()} gal
+              {" · "}OCR: {savedData.ocrProvider} ({savedData.ocrEnabled ? "ON" : "OFF"}) {savedData.ocrMinConfidence}%
             </p>
           </div>
         )}
+        {/* Error — always visible, full message */}
         {error && (
-          <div className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-100 rounded-xl">
-            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-            <p className="text-xs font-sans text-red-700">{error}</p>
+          <div className="mt-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-red-700">Error al guardar — los cambios NO fueron aplicados</p>
+                <p className="text-[11px] font-sans text-red-700 mt-0.5">{error}</p>
+              </div>
+            </div>
           </div>
         )}
       </div>

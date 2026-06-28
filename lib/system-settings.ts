@@ -40,6 +40,17 @@ export async function getSystemSettings(): Promise<SystemSettings> {
       create: { id: "singleton" },
       update: {},
     })
+
+    // Log on every page load — visible in Vercel Function Logs for diagnosis
+    console.log("[FuelOps/settings] getSystemSettings() → DB row:", {
+      tankCapacity:       row.tankCapacity?.toString(),
+      alertRedGallons:    row.alertRedGallons?.toString(),
+      alertYellowGallons: row.alertYellowGallons?.toString(),
+      ocrProvider:        row.ocrProvider,
+      ocrEnabled:         row.ocrEnabled,
+      ocrMinConfidence:   row.ocrMinConfidence,
+    })
+
     const provider = row.ocrProvider as "OPENAI" | "GEMINI" | "MOCK"
     return {
       businessName:       row.businessName       ?? DEFAULTS.businessName,

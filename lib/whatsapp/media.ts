@@ -136,6 +136,39 @@ export async function saveWhatsAppImageRecord(
   console.log(`[Storage/DB] ✅ Saved: mediaId=${data.mediaId}`)
 }
 
+// ─── Save OCR result (Phase 3.2) ─────────────────────────────────────────────
+
+export interface OcrUpdateData {
+  ocrGallons:    number | null
+  ocrConfidence: number
+  ocrQuality:    string
+  ocrNotes:      string
+  ocrProvider:   string
+  ocrRawText:    string
+}
+
+export async function updateOcrResult(
+  mediaId: string,
+  ocr:     OcrUpdateData,
+): Promise<void> {
+  await prisma.whatsAppImage.update({
+    where: { mediaId },
+    data: {
+      ocrGallons:     ocr.ocrGallons,
+      ocrConfidence:  ocr.ocrConfidence,
+      ocrQuality:     ocr.ocrQuality,
+      ocrNotes:       ocr.ocrNotes,
+      ocrProvider:    ocr.ocrProvider,
+      ocrRawText:     ocr.ocrRawText,
+      ocrProcessedAt: new Date(),
+    },
+  })
+  console.log(
+    `[Storage/DB] ✅ OCR saved: mediaId=${mediaId} gallons=${ocr.ocrGallons} ` +
+    `confidence=${ocr.ocrConfidence}% quality=${ocr.ocrQuality}`
+  )
+}
+
 // ─── Storage path helper ──────────────────────────────────────────────────────
 
 export function buildStoragePath(senderPhone: string, filename: string): string {

@@ -274,4 +274,13 @@ model WhatsAppImage {
   mimeType    String?                     // "image/jpeg", "image/png", etc.
   caption     String?                     // optional caption from sender
   createdAt   DateTime @default(now())
+
+  // OCR result — Phase 3.2 (Gemini Vision analysis)
+  ocrGallons     Decimal?  @db.Decimal(10, 2)  // meter reading in gallons, null if unreadable
+  ocrConfidence  Int?                           // 0-100 confidence from Gemini
+  ocrQuality     String?                        // "buena" | "regular" | "mala"
+  ocrNotes       String?                        // brief observation from Gemini
+  ocrProvider    String?                        // "gemini/gemini-2.0-flash"
+  ocrRawText     String?   @db.Text             // full raw JSON from Gemini
+  ocrProcessedAt DateTime?                      // when OCR ran
 }

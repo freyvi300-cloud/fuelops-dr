@@ -15,7 +15,8 @@
  */
 
 import { sendTextMessage, downloadMedia } from "./client"
-import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath } from "./media"
+import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath, updateOcrResult } from "./media"
+import { analyzeMeterImage } from "./analyzeMeterImage"
 import type { IncomingMessage } from "./types"
 import {
   getInventoryStatus,
@@ -251,13 +252,84 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
     // Non-fatal: image is in storage, DB can be retried
   }
 
-  console.log(`[Nova/Image] ═══ processImageAsync COMPLETE ═══`)
+  // ── Step 4: Analyze with Gemini Vision ─────────────────────────────────────
+  console.log(`[Nova/Image] ── STEP 4: Gemini OCR ──`)
 
-  // Phase 3.2 placeholder: OCR + auto-register supply
-  // const ocrResult = await analyzeMeterPhoto(buffer)
-  // if (ocrResult.gallons && ocrResult.confidence >= MIN_CONFIDENCE) {
-  //   await sendTextMessage(msg.from, `⛽ Medidor: ${ocrResult.gallons} gal (${ocrResult.confidence}%)`)
-  // }
+  let ocrGallons:    number | null = null
+  let ocrConfidence: number        = 0
+  let ocrQuality:    string        = "mala"
+  let ocrNotes:      string        = ""
+  let ocrProvider:   string        = "gemini/gemini-2.0-flash"
+  let ocrRawText:    string        = ""
+
+  try {
+    const ocr   = await analyzeMeterImage(buffer)
+    ocrGallons    = ocr.gallons
+    ocrConfidence = ocr.confidence
+    ocrQuality    = ocr.imageQuality
+    ocrNotes      = ocr.notes
+    ocrProvider   = ocr.provider
+    ocrRawText    = ocr.rawText
+    console.log(`[Nova/Image] ── STEP 4 ✅ gallons=${ocrGallons} confidence=${ocrConfidence}% quality=${ocrQuality}`)
+  } catch (err) {
+    const e = err as Error
+    console.error(`[Nova/Image] ── STEP 4 ❌ Gemini OCR FAILED: ${e.message}`)
+    // Don't stop — we still save what we have and reply to the user
+  }
+
+  // ── Step 5: Save OCR result to DB ──────────────────────────────────────────
+  console.log(`[Nova/Image] ── STEP 5: Save OCR result to DB ──`)
+
+  try {
+    await updateOcrResult(msg.imageId!, {
+      ocrGallons, ocrConfidence, ocrQuality, ocrNotes, ocrProvider, ocrRawText,
+    })
+    console.log(`[Nova/Image] ── STEP 5 ✅`)
+  } catch (err) {
+    console.error(`[Nova/Image] ── STEP 5 ❌ DB OCR save failed: ${(err as Error).message}`)
+    // Non-fatal
+  }
+
+  // ── Step 6: Reply to user with OCR result ───────────────────────────────────
+  console.log(`[Nova/Image] ── STEP 6: Send OCR reply ──`)
+
+  try {
+    const settings    = await getSystemSettings()
+    const minConf     = settings.ocrMinConfidence
+    const readable    = ocrGallons !== null && ocrConfidence >= minConf
+
+    const qualityLabel: Record<string, string> = {
+      buena:   "buena 👍", regular: "regular ⚠️", mala: "mala ❌",
+    }
+
+    if (readable) {
+      await sendTextMessage(msg.from,
+        `⛽ *Análisis completado*\n\n` +
+        `Lectura detectada: *${ocrGallons!.toFixed(2)} gal*\n` +
+        `Confianza: ${ocrConfidence}%\n` +
+        `Calidad de imagen: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+        (ocrNotes ? `Nota: _${ocrNotes}_\n` : "") +
+        `\n¿Deseas registrar este suministro?\nResponde *registrar* para confirmar.`
+      )
+    } else {
+      const reason = ocrGallons === null
+        ? "No pude identificar un display de medidor en la foto."
+        : `Confianza insuficiente (${ocrConfidence}% < ${minConf}% mínimo).`
+      await sendTextMessage(msg.from,
+        `⚠️ *No pude leer claramente el medidor.*\n\n` +
+        `${reason}\n\n` +
+        `Por favor envía una foto:\n` +
+        `• Más cercana al display\n` +
+        `• Con buena iluminación\n` +
+        `• Sin reflejos ni ángulos extremos`
+      )
+    }
+    console.log(`[Nova/Image] ── STEP 6 ✅ replied (readable=${readable})`)
+  } catch (err) {
+    console.error(`[Nova/Image] ── STEP 6 ❌ Reply failed: ${(err as Error).message}`)
+  }
+
+  console.log(`[Nova/Image] ═══ processImageAsync COMPLETE ═══`)
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────

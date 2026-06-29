@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react"
 import { cn }                from "@/lib/utils"
+import { resolveCustomerPrice } from "@/lib/pricing"
 import type { SerializedCustomer }      from "@/app/actions/customers"
 import type { SerializedTruck }         from "@/app/actions/trucks"
 import type { SerializedSupply, ConfirmedSupplyResult } from "@/app/actions/supplies"
@@ -114,11 +115,12 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 // ─── 1. CLIENT SEARCH (Command Palette style) ─────────────────────────────────
 
 function ClientSearch({
-  customers, selected, onSelect,
+  customers, selected, onSelect, baseFuelPrice,
 }: {
-  customers: SerializedCustomer[]
-  selected:  SerializedCustomer | null
-  onSelect:  (c: SerializedCustomer | null) => void
+  customers:     SerializedCustomer[]
+  selected:      SerializedCustomer | null
+  onSelect:      (c: SerializedCustomer | null) => void
+  baseFuelPrice: number
 }) {
   const [query,  setQuery]  = useState("")
   const [open,   setOpen]   = useState(false)
@@ -149,7 +151,14 @@ function ClientSearch({
         <div className="flex-1 min-w-0">
           <p className="font-bold text-slate-800 text-sm truncate">{selected.name}</p>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-blue-700 font-semibold">{fmtRD(selected.fuelPricePerGallon)}/gal</span>
+            <span className="text-[11px] text-blue-700 font-semibold">
+              {fmtRD(selected.effectivePricePerGallon)}/gal
+              {selected.priceType === "DISCOUNT_PCT" && (
+                <span className="ml-1 text-[9px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded-full font-bold">
+                  −{selected.priceDiscount}%
+                </span>
+              )}
+            </span>
             {selected.currentBalance > 0 && (
               <span className="text-[11px] text-red-600 font-semibold">Debe {fmtRD(selected.currentBalance)}</span>
             )}
@@ -197,7 +206,7 @@ function ClientSearch({
                 {c.phone && <p className="text-[10px] font-sans text-slate-400">{c.phone}</p>}
               </div>
               <div className="text-right shrink-0">
-                <p className="text-[11px] font-bold text-blue-600">{fmtRD(c.fuelPricePerGallon)}/gal</p>
+                <p className="text-[11px] font-bold text-blue-600">{fmtRD(c.effectivePricePerGallon)}/gal</p>
                 {c.currentBalance > 0 && <p className="text-[10px] text-red-500 font-semibold">Debe {fmtRD(c.currentBalance)}</p>}
               </div>
             </button>
@@ -641,9 +650,10 @@ interface SupplyFormProps {
   recentSupplies:   SerializedSupply[]
   ocrEnabled:       boolean
   ocrMinConfidence: number
+  baseFuelPrice:    number
 }
 
-export default function SupplyForm({ customers, trucks, ocrEnabled, ocrMinConfidence }: SupplyFormProps) {
+export default function SupplyForm({ customers, trucks, ocrEnabled, ocrMinConfidence, baseFuelPrice }: SupplyFormProps) {
   const [isPending, startTransition] = useTransition()
 
   // Form state
@@ -667,10 +677,16 @@ export default function SupplyForm({ customers, trucks, ocrEnabled, ocrMinConfid
   const total      = gallonsNum * priceNum
   const canConfirm = customer !== null && gallonsNum > 0 && priceNum > 0
 
-  // When customer selected → auto-fill price
+  // When customer selected → auto-fill effective price (fixed OR base×discount)
   function handleCustomerSelect(c: SerializedCustomer | null) {
     setCustomer(c); setTruckId(""); setError(null)
-    if (c && c.fuelPricePerGallon > 0) setPrice(c.fuelPricePerGallon.toFixed(2))
+    if (c) {
+      const effective = resolveCustomerPrice(
+        { priceType: c.priceType, fuelPricePerGallon: c.fuelPricePerGallon, priceDiscount: c.priceDiscount },
+        baseFuelPrice,
+      )
+      if (effective > 0) setPrice(effective.toFixed(2))
+    }
   }
 
   // Photo selected → compress → trigger OCR only if enabled (non-blocking)
@@ -770,7 +786,7 @@ export default function SupplyForm({ customers, trucks, ocrEnabled, ocrMinConfid
               {/* Client search */}
               <Card className="p-4">
                 <SectionLabel>1 · Cliente</SectionLabel>
-                <ClientSearch customers={customers} selected={customer} onSelect={handleCustomerSelect} />
+                <ClientSearch customers={customers} selected={customer} onSelect={handleCustomerSelect} baseFuelPrice={baseFuelPrice} />
               </Card>
 
               {/* Equipment cards */}

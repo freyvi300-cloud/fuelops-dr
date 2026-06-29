@@ -140,6 +140,7 @@ export default function SettingsForm({ settings }: Props) {
   const [ocrProvider,        setOcrProvider]        = useState(settings.ocrProvider)
   const [ocrEnabled,         setOcrEnabled]         = useState(settings.ocrEnabled)
   const [ocrMinConf,         setOcrMinConf]         = useState(settings.ocrMinConfidence)
+  const [defaultFuelPrice,   setDefaultFuelPrice]   = useState(settings.defaultFuelPrice)
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -168,7 +169,7 @@ export default function SettingsForm({ settings }: Props) {
           tankCapacity:       numField("tankCapacity",       "Capacidad total"),
           alertRedGallons:    numField("alertRedGallons",    "Alerta roja"),
           alertYellowGallons: numField("alertYellowGallons", "Alerta amarilla"),
-          defaultFuelPrice:   parseFloat((fd.get("defaultFuelPrice") as string) ?? "0") || 0,
+          defaultFuelPrice:   numField("defaultFuelPrice", "Precio base de combustible"),
           ocrProvider:        ((fd.get("ocrProvider") as string) || "MOCK") as "OPENAI" | "GEMINI" | "MOCK",
           ocrEnabled:         fd.get("ocrEnabled") === "true",
           ocrMinConfidence:   Math.min(100, Math.max(0, parseInt((fd.get("ocrMinConfidence") as string) ?? "90") || 90)),
@@ -224,6 +225,7 @@ export default function SettingsForm({ settings }: Props) {
               {" · "}🔴 ≤ {savedData.alertRedGallons.toLocaleString()} gal
               {" · "}🟡 ≤ {savedData.alertYellowGallons.toLocaleString()} gal
               {" · "}OCR: {savedData.ocrProvider} ({savedData.ocrEnabled ? "ON" : "OFF"}) {savedData.ocrMinConfidence}%
+              {" · "}Precio base: RD${savedData.defaultFuelPrice.toFixed(2)}
             </p>
           </div>
         )}
@@ -292,10 +294,18 @@ export default function SettingsForm({ settings }: Props) {
                     placeholder="20000" className={INPUT} />
                 </div>
                 <div>
-                  <label className={LABEL}>Precio por galón por defecto (RD$)</label>
+                  <label className={LABEL}>
+                    Precio base actual del combustible (RD$/gal)
+                    <span className="ml-1 text-slate-400 font-normal">— usado en descuentos %</span>
+                  </label>
                   <input name="defaultFuelPrice" type="number" min="0" step="0.01"
-                    defaultValue={settings.defaultFuelPrice}
-                    placeholder="0.00" className={INPUT} />
+                    value={defaultFuelPrice}
+                    onChange={e => setDefaultFuelPrice(parseFloat(e.target.value) || 0)}
+                    placeholder="250.00" className={INPUT} />
+                  <p className="text-[10px] font-sans text-slate-400 mt-1">
+                    Clientes con descuento porcentual calculan su precio final sobre este valor.
+                    Cambiarlo no afecta facturas ya emitidas.
+                  </p>
                 </div>
               </div>
 

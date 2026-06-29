@@ -26,6 +26,7 @@ export interface SavedSettings {
   ocrProvider:        string
   ocrEnabled:         boolean
   ocrMinConfidence:   number
+  defaultFuelPrice:   number
 }
 
 export async function updateSystemSettings(
@@ -56,6 +57,8 @@ export async function updateSystemSettings(
     throw new Error(`Confianza mínima debe ser 0-100, recibido: ${data.ocrMinConfidence}.`)
   if (!["OPENAI","GEMINI","MOCK"].includes(data.ocrProvider))
     throw new Error(`Proveedor OCR inválido: "${data.ocrProvider}".`)
+  if (typeof data.defaultFuelPrice !== "number" || isNaN(data.defaultFuelPrice) || data.defaultFuelPrice < 0)
+    throw new Error(`Precio base de combustible inválido: "${data.defaultFuelPrice}". Debe ser ≥ 0.`)
 
   // ── Explicit field mapping (no spread) — prevents unexpected fields ───────
   const payload = {
@@ -87,6 +90,7 @@ export async function updateSystemSettings(
     ocrProvider:        row.ocrProvider,
     ocrEnabled:         row.ocrEnabled,
     ocrMinConfidence:   row.ocrMinConfidence,
+    defaultFuelPrice:   row.defaultFuelPrice.toNumber(),
   }
   console.log("[FuelOps/settings] Persisted in DB:", saved)
 

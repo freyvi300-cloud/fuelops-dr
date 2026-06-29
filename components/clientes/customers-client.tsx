@@ -100,15 +100,27 @@ const LABEL = "block text-xs font-medium text-slate-600 mb-1.5"
 
 function CustomerForm({
   customer,
+  baseFuelPrice,
   onSubmit,
   onCancel,
   isPending,
 }: {
   customer: SerializedCustomer | null
+  baseFuelPrice: number
   onSubmit: (d: CustomerFormData) => void
   onCancel: () => void
   isPending: boolean
 }) {
+  const [priceType, setPriceType] = useState<"FIXED" | "DISCOUNT_PCT">(
+    customer?.priceType ?? "FIXED"
+  )
+  const [fixedPrice,    setFixedPrice]    = useState(customer?.fuelPricePerGallon ?? 0)
+  const [discountPct,   setDiscountPct]   = useState(customer?.priceDiscount ?? 0)
+
+  const effectivePrice = priceType === "FIXED"
+    ? fixedPrice
+    : Math.round(baseFuelPrice * (1 - discountPct / 100) * 100) / 100
+
   function handle(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
@@ -121,7 +133,9 @@ function CustomerForm({
       rnc:                (fd.get("rnc") as string)     || null,
       creditLimit:        num("creditLimit"),
       pendingGallons:     num("pendingGallons"),
-      fuelPricePerGallon: num("fuelPricePerGallon"),
+      priceType,
+      fuelPricePerGallon: priceType === "FIXED" ? fixedPrice : 0,
+      priceDiscount:      priceType === "DISCOUNT_PCT" ? discountPct : 0,
       notes:              (fd.get("notes") as string)   || null,
     })
   }
@@ -166,17 +180,81 @@ function CustomerForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className={LABEL}>Galones pendientes</label>
-          <input name="pendingGallons" type="number" min="0" step="0.01"
-            defaultValue={customer?.pendingGallons ?? 0} className={INPUT} />
+      <div>
+        <label className={LABEL}>Galones pendientes</label>
+        <input name="pendingGallons" type="number" min="0" step="0.01"
+          defaultValue={customer?.pendingGallons ?? 0} className={INPUT} />
+      </div>
+
+      {/* ── Pricing section ─────────────────────────────────────── */}
+      <div className="rounded-xl border border-slate-200 p-4 space-y-3 bg-slate-50/60">
+        <p className="text-xs font-bold text-slate-700">Tipo de precio</p>
+
+        {/* Toggle */}
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            { value: "FIXED",        label: "Precio fijo",    desc: "RD$ fijo por galón" },
+            { value: "DISCOUNT_PCT", label: "Descuento %",    desc: `Sobre precio base` },
+          ] as const).map(opt => (
+            <button key={opt.value} type="button"
+              onClick={() => setPriceType(opt.value)}
+              className={cn(
+                "flex flex-col items-start p-3 rounded-xl border-2 text-left transition-all",
+                priceType === opt.value
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-slate-200 bg-white hover:border-blue-200"
+              )}>
+              <span className={cn("text-sm font-bold",
+                priceType === opt.value ? "text-blue-700" : "text-slate-700")}>
+                {opt.label}
+              </span>
+              <span className="text-[10px] font-sans text-slate-400">{opt.desc}</span>
+            </button>
+          ))}
         </div>
-        <div>
-          <label className={LABEL}>Precio por galón (RD$)</label>
-          <input name="fuelPricePerGallon" type="number" min="0" step="0.01"
-            defaultValue={customer?.fuelPricePerGallon ?? 0} className={INPUT} />
-        </div>
+
+        {/* Conditional input */}
+        {priceType === "FIXED" ? (
+          <div>
+            <label className={LABEL}>Precio fijo por galón (RD$)</label>
+            <input type="number" min="0" step="0.01"
+              value={fixedPrice}
+              onChange={e => setFixedPrice(parseFloat(e.target.value) || 0)}
+              placeholder="0.00" className={INPUT} />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div>
+              <label className={LABEL}>Descuento sobre precio base (%)</label>
+              <div className="flex items-center gap-3">
+                <input type="number" min="0" max="100" step="0.1"
+                  value={discountPct}
+                  onChange={e => setDiscountPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+                  placeholder="10.0" className={cn(INPUT, "w-28 text-center")} />
+                <input type="range" min="0" max="50" step="0.5"
+                  value={discountPct}
+                  onChange={e => setDiscountPct(parseFloat(e.target.value))}
+                  className="flex-1 accent-blue-600" />
+              </div>
+            </div>
+            {/* Live preview */}
+            <div className={cn(
+              "flex items-center justify-between px-3 py-2 rounded-xl text-xs font-sans",
+              baseFuelPrice > 0 ? "bg-blue-50 border border-blue-100" : "bg-slate-100 border border-slate-200"
+            )}>
+              <span className="text-slate-500">
+                {baseFuelPrice > 0
+                  ? `RD$${baseFuelPrice.toFixed(2)} × (1 − ${discountPct}%) =`
+                  : "Configura precio base en Configuración →"}
+              </span>
+              {baseFuelPrice > 0 && (
+                <span className="font-bold text-blue-700 text-sm">
+                  RD${effectivePrice.toFixed(2)}/gal
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div>
@@ -202,12 +280,13 @@ function CustomerForm({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface Props {
-  customers: SerializedCustomer[]
-  stats: CustomerStats
+  customers:     SerializedCustomer[]
+  stats:         CustomerStats
   initialSearch: string
+  baseFuelPrice: number
 }
 
-export default function CustomersClient({ customers, stats, initialSearch }: Props) {
+export default function CustomersClient({ customers, stats, initialSearch, baseFuelPrice }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [modalOpen, setModalOpen] = useState(false)
@@ -495,11 +574,24 @@ export default function CustomersClient({ customers, stats, initialSearch }: Pro
                           </td>
 
                           {/* Precio / galón */}
-                          <td className="px-4 py-4 text-right font-medium text-slate-700">
-                            {c.fuelPricePerGallon > 0
-                              ? fmtRD(c.fuelPricePerGallon)
-                              : <span className="text-slate-300">—</span>
-                            }
+                          <td className="px-4 py-4 text-right">
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="font-semibold text-slate-700">
+                                {c.effectivePricePerGallon > 0
+                                  ? fmtRD(c.effectivePricePerGallon)
+                                  : <span className="text-slate-300">—</span>
+                                }
+                              </span>
+                              {c.priceType === "DISCOUNT_PCT" ? (
+                                <span className="text-[9px] font-semibold bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded-full">
+                                  −{c.priceDiscount}%
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-semibold bg-slate-50 text-slate-400 border border-slate-100 px-1.5 py-0.5 rounded-full">
+                                  fijo
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           {/* Total pendiente */}
@@ -636,6 +728,7 @@ export default function CustomersClient({ customers, stats, initialSearch }: Pro
             <div className="px-6 py-5">
               <CustomerForm
                 customer={editing}
+                baseFuelPrice={baseFuelPrice}
                 onSubmit={handleSubmit}
                 onCancel={closeModal}
                 isPending={isPending}

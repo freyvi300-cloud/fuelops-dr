@@ -12,31 +12,43 @@ import { prisma } from "@/lib/prisma"
 
 const BUCKET = "whatsapp-images"
 
-// ─── Key diagnostic helper ────────────────────────────────────────────────────
+// ─── Environment variable audit ──────────────────────────────────────────────
 
-function diagnoseKey(key: string, label: string): void {
-  const len         = key.length
-  const startsEyJ   = key.startsWith("eyJ")
-  const startsSb    = key.startsWith("sb_secret_")
-  const startsBearer= key.startsWith("Bearer ")
-  const first6      = key.slice(0, 6)
+function auditEnvVars(): void {
+  // List every variable name that could be relevant — prints name + length only
+  const candidates = [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_KEY",
+    "SUPABASE_SECRET",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  ]
 
-  console.log(`[Storage/KEY] ${label}:`)
-  console.log(`[Storage/KEY]   length       : ${len} chars`)
-  console.log(`[Storage/KEY]   starts "eyJ" : ${startsEyJ}  ← MUST be true for a valid JWT`)
-  console.log(`[Storage/KEY]   starts "sb_" : ${startsSb}  ← new Supabase format`)
-  console.log(`[Storage/KEY]   starts "Bear": ${startsBearer}  ← if true, key wrongly includes "Bearer " prefix`)
-  console.log(`[Storage/KEY]   first 6 chars: "${first6}"`)
+  console.log("[Storage/ENV] ── All Supabase-related env vars ──")
+  for (const name of candidates) {
+    const val = process.env[name]
+    if (val !== undefined) {
+      const len        = val.length
+      const startsEyJ  = val.startsWith("eyJ")
+      const startsSb   = val.startsWith("sb_")
+      const first6     = val.slice(0, 6)
+      console.log(`[Storage/ENV]   ${name.padEnd(35)} → ${len} chars | starts:"${first6}" | eyJ:${startsEyJ} | sb_:${startsSb}`)
+    } else {
+      console.log(`[Storage/ENV]   ${name.padEnd(35)} → NOT SET`)
+    }
+  }
 
-  if (len < 100) {
-    console.error(`[Storage/KEY] ❌ Key is only ${len} chars — way too short.`)
-    console.error(`[Storage/KEY]    A real service_role key is 200+ chars (JWT).`)
-    console.error(`[Storage/KEY]    Check Vercel → Settings → Env Vars → SUPABASE_SERVICE_ROLE_KEY`)
-    console.error(`[Storage/KEY]    Get it from: Supabase → Settings → API → "service_role" (NOT "anon")`)
-  } else if (!startsEyJ && !startsSb) {
-    console.error(`[Storage/KEY] ❌ Key does not start with "eyJ" or "sb_" — wrong key type?`)
-  } else {
-    console.log(`[Storage/KEY] ✅ Key format looks correct`)
+  // Explicit check on the variable we actually use
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
+  console.log(`[Storage/ENV] ── Using: SUPABASE_SERVICE_ROLE_KEY (${key.length} chars) ──`)
+  if (key.length < 100) {
+    console.error(`[Storage/ENV] ❌ SUPABASE_SERVICE_ROLE_KEY is ${key.length} chars — too short for a JWT.`)
+    console.error(`[Storage/ENV]    Expected: 200+ chars starting with "eyJ"`)
+    console.error(`[Storage/ENV]    Get it: Supabase → Settings → API → "service_role" (NOT "anon")`)
   }
 }
 
@@ -58,8 +70,8 @@ export async function uploadToSupabase(
     )
   }
 
-  // Always diagnose the key before using it
-  diagnoseKey(key, "SUPABASE_SERVICE_ROLE_KEY")
+  // Audit all Supabase env vars before using them
+  auditEnvVars()
 
   const uploadUrl = `${url}/storage/v1/object/${BUCKET}/${path}`
   const publicUrl = `${url}/storage/v1/object/public/${BUCKET}/${path}`

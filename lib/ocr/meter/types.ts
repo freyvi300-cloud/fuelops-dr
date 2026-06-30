@@ -92,13 +92,25 @@ export function isOptimizedProvider(p: MeterOCRProvider): p is MeterOCRProviderO
 }
 
 // ─── Rate limit error ─────────────────────────────────────────────────────────
-// Thrown when a provider returns HTTP 429. Distinct from generic errors so
-// callers can respond with a user-friendly "try again in a few seconds" message
-// instead of "could not read the meter."
+// Thrown when a provider returns HTTP 429.
 
 export class RateLimitError extends Error {
   constructor(provider: string, stage: string, attempts: number) {
     super(`${provider} rate limit (HTTP 429) after ${attempts} attempt(s) at ${stage}`)
     this.name = "RateLimitError"
+  }
+}
+
+// ─── Model response error ─────────────────────────────────────────────────────
+// Thrown when Gemini responds (HTTP 200) but the response cannot be parsed
+// into a usable result after all repair attempts. Distinct from OCR failure
+// (model couldn't read the meter) — this means the pipeline itself broke.
+// commands.ts catches this and replies with an internal error message, NOT
+// "no pude leer el medidor".
+
+export class ModelResponseError extends Error {
+  constructor(stage: string, rawResponse: string) {
+    super(`Gemini response could not be parsed at ${stage} | raw: ${rawResponse.slice(0, 200)}`)
+    this.name = "ModelResponseError"
   }
 }

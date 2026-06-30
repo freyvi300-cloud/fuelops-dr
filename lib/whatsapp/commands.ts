@@ -17,7 +17,7 @@
 import { sendTextMessage, downloadMedia } from "./client"
 import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath, updateOcrResult } from "./media"
 import { analyzeMeterImage } from "./analyzeMeterImage"
-import { RateLimitError } from "@/lib/ocr/meter/types"
+import { RateLimitError, ModelResponseError } from "@/lib/ocr/meter/types"
 import type { IncomingMessage } from "./types"
 import {
   getInventoryStatus,
@@ -280,6 +280,15 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
         "⚠️ El sistema está ocupado procesando imágenes.\nPor favor intenta nuevamente en unos segundos."
       )
       console.log(`[Nova/Image] ── Rate limit reply sent — stopping pipeline`)
+      return
+    }
+    if (err instanceof ModelResponseError) {
+      console.error(`[Nova/Image] ── STEP 4 ❌ MODEL RESPONSE ERROR: ${(err as Error).message}`)
+      await sendTextMessage(
+        msg.from,
+        "⚠️ Ocurrió un error interno procesando la respuesta del modelo.\nPor favor intenta nuevamente."
+      )
+      console.log(`[Nova/Image] ── Model response error reply sent — stopping pipeline`)
       return
     }
     const e = err as Error

@@ -30,7 +30,14 @@ import { RateLimitError, ModelResponseError } from "./types"
 
 const MAX_ATTEMPTS      = 3
 const BACKOFF_MS        = [2000, 4000]
-const MAX_OUTPUT_TOKENS = 1024
+
+// maxOutputTokens: kept at 1024 (well above the ~150 tokens a full JSON response needs).
+// The real cause of MAX_TOKENS truncation on Gemini 2.5 Flash is the internal
+// "thinking" step — the model reasons silently before outputting and those tokens
+// count against this budget. thinkingBudget: 0 disables thinking entirely,
+// giving all 1024 tokens to the actual JSON output.
+const MAX_OUTPUT_TOKENS  = 1024
+const THINKING_BUDGET    = 0     // disable thinking to preserve output token budget
 
 // ─── Structured output schemas ────────────────────────────────────────────────
 // responseSchema + responseMimeType: "application/json" forces Gemini to emit
@@ -251,6 +258,15 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
         console.log(`[Gemini] ${stage} Intento ${attempt}/${MAX_ATTEMPTS}`)
       }
 
+      const generationConfig = {
+        temperature:      0,
+        maxOutputTokens:  MAX_OUTPUT_TOKENS,
+        responseMimeType: "application/json",
+        responseSchema:   schema,
+        thinkingConfig:   { thinkingBudget: THINKING_BUDGET },
+      }
+      console.log(`[Gemini] generationConfig: maxOutputTokens=${generationConfig.maxOutputTokens} thinkingBudget=${THINKING_BUDGET} responseMimeType=${generationConfig.responseMimeType}`)
+
       const t0  = Date.now()
       const res = await fetch(url, {
         method:  "POST",
@@ -262,12 +278,7 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
               { inlineData: { mimeType: "image/jpeg", data: base64 } },
             ],
           }],
-          generationConfig: {
-            temperature:      0,
-            maxOutputTokens:  MAX_OUTPUT_TOKENS,
-            responseMimeType: "application/json",
-            responseSchema:   schema,
-          },
+          generationConfig,
         }),
       })
       const ms = Date.now() - t0

@@ -53,64 +53,85 @@ const ANALYZE_SCHEMA = {
       required: ["x_pct", "y_pct", "w_pct", "h_pct"],
     },
     readable:      { type: "boolean" },
+    // gallons is required — Gemini must always emit this field.
+    // nullable: true allows null only when truly no digit is visible.
     gallons:       { type: "number",  nullable: true },
     confidence:    { type: "integer" },
     image_quality: { type: "string",  enum: ["good", "fair", "poor"] },
     notes:         { type: "string" },
   },
-  required: ["has_meter", "display_type", "readable", "confidence", "image_quality", "notes"],
+  required: ["has_meter", "display_type", "readable", "gallons", "confidence", "image_quality", "notes"],
 }
 
 const READ_SCHEMA = {
   type: "object",
   properties: {
     readable:      { type: "boolean" },
+    // gallons is required — Gemini must always emit this field.
+    // nullable: true allows null only when truly no digit is visible.
     gallons:       { type: "number",  nullable: true },
     confidence:    { type: "integer" },
     image_quality: { type: "string",  enum: ["good", "fair", "poor"] },
     notes:         { type: "string" },
   },
-  required: ["readable", "confidence", "image_quality", "notes"],
+  required: ["readable", "gallons", "confidence", "image_quality", "notes"],
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
+// ANALYZE_PROMPT — combined locate + read in one call.
+// Written as a pure digit-extraction task, not image description.
+// Key principle: gallons is ALWAYS required. The model must commit to a number
+// or explicitly return null — it cannot skip the field or defer.
 const ANALYZE_PROMPT =
-  `You are a specialist in reading fuel pump and flow meter displays.\n\n` +
-  `Analyze the image and return the result as structured JSON.\n\n` +
-  `Fields:\n` +
-  `- has_meter: true if any fuel meter display is visible\n` +
-  `- display_type: "mechanical" (rotating drums/odometer), "digital" (LCD/LED), or "unknown"\n` +
-  `- display_region: coordinates of the NUMBER AREA ONLY in % of image dimensions, or null if no meter\n` +
-  `- readable: true if you can read ANY numeric value, even approximately\n` +
-  `- gallons: exact numeric reading (include decimal if visible), null ONLY if completely unreadable\n` +
-  `- confidence: 0=cannot read, 70=reasonable guess, 95=crystal clear\n` +
-  `- image_quality: "good" (clear/well-lit), "fair" (blurry/dark but readable), "poor" (very degraded)\n` +
-  `- notes: one short English sentence (under 80 chars) about what you see\n\n` +
-  `Critical rules:\n` +
-  `1. ALWAYS attempt to read — do not refuse just because the image is imperfect\n` +
-  `2. If partially visible, read what you can and set confidence accordingly (40–60%)\n` +
-  `3. Mechanical drum displays: read each wheel separately, combine into one number\n` +
-  `4. Worn digits: use context (adjacent digits, typical fuel quantities) to infer\n` +
-  `5. Ignore everything except the numeric display — labels, hoses, hands, background\n` +
-  `6. Only set readable=false if you genuinely see zero numeric information`
+  `TASK: OCR extraction from a fuel meter photo. You are a digit reader, not an image describer.\n\n` +
+  `STEP 1 — Locate the display:\n` +
+  `  Find the numeric counter (odometer drums, LCD, or LED digits).\n` +
+  `  Record its bounding box as % of image width/height.\n\n` +
+  `STEP 2 — Read the number:\n` +
+  `  Read EVERY digit you can see, left to right.\n` +
+  `  For mechanical drum displays: read each rotating wheel as one digit.\n` +
+  `  For partially obscured digits: estimate from the visible portion and adjacent context.\n` +
+  `  Combine all digits into a single decimal number (e.g. 38.6, 102, 7.50).\n` +
+  `  DO NOT describe the meter. DO NOT explain what you see. Just output the number.\n\n` +
+  `OUTPUT RULES — you MUST always populate every field:\n` +
+  `  has_meter    → true if a numeric counter is visible anywhere in the image\n` +
+  `  display_type → "mechanical" / "digital" / "unknown"\n` +
+  `  display_region → bounding box of the digit area in % (x_pct, y_pct, w_pct, h_pct), or null\n` +
+  `  readable     → true if you extracted any numeric value, even a partial estimate\n` +
+  `  gallons      → the numeric reading as a decimal (38.6, 102.0, 7.5). ` +
+                   `MUST be a number if readable=true. ` +
+                   `Set to null ONLY if you cannot distinguish a single digit anywhere.\n` +
+  `  confidence   → integer 0–100: how certain you are of the exact value ` +
+                   `(95=all digits clear, 70=some digits estimated, 40=mostly guessed, 0=no digits seen)\n` +
+  `  image_quality → "good" / "fair" / "poor"\n` +
+  `  notes        → ≤60 chars: which digits were clear vs. estimated (e.g. "digits 1-3 clear, digit 4 estimated")\n\n` +
+  `STRICT RULES:\n` +
+  `  • If readable=true, gallons MUST be a number — never null.\n` +
+  `  • If you see partial digits, commit to your best reading and lower confidence.\n` +
+  `  • Ignore brand labels, hoses, hands, and background — only read the digit counter.\n` +
+  `  • gallons=null is only valid when you see zero recognizable digits.`
 
+// READ_PROMPT — focused second pass on a cropped display image.
+// Even more direct: the image IS the display, just read the digits.
 const READ_PROMPT =
-  `You are a specialist in reading fuel meter displays.\n\n` +
-  `Analyze this image (may be a cropped display region) and return structured JSON.\n\n` +
-  `Fields:\n` +
-  `- readable: true if you can read ANY numeric value, even approximately\n` +
-  `- gallons: exact numeric reading (include decimal if visible), null ONLY if completely unreadable\n` +
-  `- confidence: 0=cannot read, 70=reasonable guess, 95=crystal clear\n` +
-  `- image_quality: "good" (clear/well-lit), "fair" (blurry/dark but readable), "poor" (very degraded)\n` +
-  `- notes: one short English sentence (under 80 chars) about readability\n\n` +
-  `Critical rules:\n` +
-  `1. ALWAYS attempt to read — do not refuse just because the image is imperfect\n` +
-  `2. If partially visible, read what you can and set confidence accordingly (40–60%)\n` +
-  `3. Mechanical drum displays: read each wheel separately, combine into one number\n` +
-  `4. Worn digits: use context (adjacent digits, typical fuel quantities) to infer\n` +
-  `5. Ignore everything except the numeric display — labels, hoses, hands, background\n` +
-  `6. Only set readable=false if you genuinely see zero numeric information`
+  `TASK: Read the number shown on this fuel meter display. Pure digit extraction.\n\n` +
+  `The image shows a meter counter — either rotating mechanical drums or an LCD/LED display.\n` +
+  `Read every digit left to right and return the complete numeric value.\n\n` +
+  `OUTPUT RULES — all fields are required:\n` +
+  `  readable     → true if you can extract any numeric value\n` +
+  `  gallons      → the reading as a decimal number (e.g. 38.6, 102.0). ` +
+                   `MUST be a number if readable=true. ` +
+                   `null ONLY if you cannot identify a single digit.\n` +
+  `  confidence   → 0–100: certainty of the exact value ` +
+                   `(95=all digits clear, 70=some estimated, 40=mostly guessed)\n` +
+  `  image_quality → "good" / "fair" / "poor"\n` +
+  `  notes        → ≤60 chars describing which digits were clear vs. estimated\n\n` +
+  `STRICT RULES:\n` +
+  `  • readable=true means gallons MUST be a number, never null.\n` +
+  `  • Partial reading is better than no reading — estimate missing digits, lower confidence.\n` +
+  `  • Do not describe the device. Output only the extracted number and confidence.\n` +
+  `  • gallons=null only if you genuinely see no recognizable digit anywhere.`
 
 // ─── Robust JSON parser (safety net — structured output should make this rare) ─
 

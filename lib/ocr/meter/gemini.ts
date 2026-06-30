@@ -125,9 +125,35 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
       })
       const ms = Date.now() - t0
 
-      // ── 429: log clearly and retry ─────────────────────────────────────────
+      // ── 429: log full diagnostic info and retry ────────────────────────────
       if (res.status === 429) {
-        console.warn(`[Gemini] HTTP 429 — Rate limit exceeded (${stage} intento ${attempt}/${MAX_ATTEMPTS})`)
+        const rawBody    = await res.text().catch(() => "")
+        const maskedKey  = this.#apiKey.length >= 8
+          ? `${this.#apiKey.slice(0, 4)}...${this.#apiKey.slice(-4)}`
+          : "****"
+        const retryAfter = res.headers.get("Retry-After")
+        const limitReq   = res.headers.get("x-ratelimit-limit-requests")
+        const limitTok   = res.headers.get("x-ratelimit-limit-tokens")
+        const remReq     = res.headers.get("x-ratelimit-remaining-requests")
+        const remTok     = res.headers.get("x-ratelimit-remaining-tokens")
+        const resetReq   = res.headers.get("x-ratelimit-reset-requests")
+        const resetTok   = res.headers.get("x-ratelimit-reset-tokens")
+
+        console.warn(`[Gemini] ══════════════ HTTP 429 RATE LIMIT ══════════════`)
+        console.warn(`[Gemini] Stage:        ${stage} — Intento ${attempt}/${MAX_ATTEMPTS}`)
+        console.warn(`[Gemini] Model:        ${this.#model}`)
+        console.warn(`[Gemini] Endpoint:     ${url.replace(/key=[^&]+/, `key=${maskedKey}`)}`)
+        console.warn(`[Gemini] API Key:      ${maskedKey}`)
+        if (retryAfter) console.warn(`[Gemini] Retry-After: ${retryAfter}s`)
+        if (limitReq)   console.warn(`[Gemini] x-ratelimit-limit-requests:     ${limitReq}`)
+        if (limitTok)   console.warn(`[Gemini] x-ratelimit-limit-tokens:       ${limitTok}`)
+        if (remReq)     console.warn(`[Gemini] x-ratelimit-remaining-requests: ${remReq}`)
+        if (remTok)     console.warn(`[Gemini] x-ratelimit-remaining-tokens:   ${remTok}`)
+        if (resetReq)   console.warn(`[Gemini] x-ratelimit-reset-requests:     ${resetReq}`)
+        if (resetTok)   console.warn(`[Gemini] x-ratelimit-reset-tokens:       ${resetTok}`)
+        console.warn(`[Gemini] Full response body: ${rawBody.slice(0, 1000)}`)
+        console.warn(`[Gemini] ════════════════════════════════════════════════`)
+
         if (attempt === MAX_ATTEMPTS) {
           throw new RateLimitError(this.name, stage, MAX_ATTEMPTS)
         }

@@ -362,7 +362,7 @@ export default function SettingsForm({ settings }: Props) {
                 <label className={LABEL}>Proveedor OCR</label>
                 <div className="grid grid-cols-3 gap-2">
                   {([
-                    { value: "GEMINI", label: "Gemini",  model: "gemini-2.0-flash", req: "GEMINI_API_KEY",  color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-400" },
+                    { value: "GEMINI", label: "Gemini",  model: "gemini-2.5-flash", req: "GEMINI_API_KEY",  color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-400" },
                     { value: "OPENAI", label: "OpenAI",  model: "gpt-4o-mini",      req: "OPENAI_API_KEY", color: "text-emerald-700",bg: "bg-emerald-50",border: "border-emerald-400" },
                     { value: "MOCK",   label: "Mock",    model: "simulado",          req: "Sin API Key",    color: "text-violet-700", bg: "bg-violet-50", border: "border-violet-400" },
                   ] as const).map(p => {

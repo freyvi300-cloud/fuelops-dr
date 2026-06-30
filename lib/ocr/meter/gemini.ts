@@ -84,7 +84,7 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
   readonly #apiKey:        string
   readonly #model:         string
 
-  constructor(apiKey: string, model = "gemini-2.0-flash") {
+  constructor(apiKey: string, model = "gemini-2.5-flash") {
     this.#apiKey = apiKey
     this.#model  = model
     this.name    = `gemini/${model}`

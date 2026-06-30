@@ -260,7 +260,7 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
   let ocrConfidence: number        = 0
   let ocrQuality:    string        = "mala"
   let ocrNotes:      string        = ""
-  let ocrProvider:   string        = "gemini/gemini-2.0-flash"
+  let ocrProvider:   string        = "gemini/gemini-2.5-flash"
   let ocrRawText:    string        = ""
 
   try {

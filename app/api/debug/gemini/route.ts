@@ -9,7 +9,7 @@
  * Interpretation:
  *   200 → API key is valid, text quota is fine.
  *         If Vision calls still return 429, the issue is vision-specific
- *         quota (gemini-2.0-flash has separate RPM limits per modality).
+ *         quota (gemini-2.5-flash has separate RPM limits per modality).
  *   429 → General quota or key issue. Check Google AI Studio for limits.
  *   403 → API key is invalid or does not have Gemini access.
  *   other → Unexpected Gemini error — full body is returned.
@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 const SECRET = process.env.DIAGNOSTIC_SECRET ?? "fuelops-debug"
-const MODEL  = "gemini-2.0-flash"
+const MODEL  = "gemini-2.5-flash"
 
 export async function GET(req: NextRequest) {
   // ── Auth ────────────────────────────────────────────────────────────────────

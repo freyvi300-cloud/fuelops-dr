@@ -24,7 +24,7 @@ const PROVIDER_META: Record<ProviderName, {
   label: string; model: string; envVar: string | null; color: string
 }> = {
   OPENAI: { label: "OpenAI",  model: "gpt-4o-mini",          envVar: "OPENAI_API_KEY", color: "text-emerald-600" },
-  GEMINI: { label: "Gemini",  model: "gemini-2.0-flash",     envVar: "GEMINI_API_KEY", color: "text-blue-600" },
+  GEMINI: { label: "Gemini",  model: "gemini-2.5-flash",     envVar: "GEMINI_API_KEY", color: "text-blue-600" },
   MOCK:   { label: "Mock",    model: "simulated (no API)",    envVar: null,              color: "text-violet-600" },
 }
 

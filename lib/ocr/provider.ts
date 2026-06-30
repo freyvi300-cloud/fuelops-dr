@@ -106,7 +106,7 @@ export class GeminiVisionProvider implements OCRProvider {
   readonly #apiKey: string
   readonly #model:  string
 
-  constructor(apiKey: string, model = "gemini-2.0-flash") {
+  constructor(apiKey: string, model = "gemini-2.5-flash") {
     this.#apiKey = apiKey
     this.#model  = model
   }

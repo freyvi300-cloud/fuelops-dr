@@ -291,40 +291,67 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
   }
 
   // ── Step 6: Reply to user with OCR result ───────────────────────────────────
+  // Three-tier confidence model:
+  //   HIGH  (≥ ocrMinConfidence, default 90%) → confirmed reading, offer to register
+  //   MED   (≥ 70%, < ocrMinConfidence)       → "approximately X gal, please confirm"
+  //   LOW   (< 70% OR gallons === null)        → ask for better photo
   console.log(`[Nova/Image] ── STEP 6: Send OCR reply ──`)
 
   try {
-    const settings    = await getSystemSettings()
-    const minConf     = settings.ocrMinConfidence
-    const readable    = ocrGallons !== null && ocrConfidence >= minConf
+    const settings  = await getSystemSettings()
+    const highThreshold = settings.ocrMinConfidence  // e.g. 90
+    const medThreshold  = 70                         // fixed floor for "approximate" tier
 
     const qualityLabel: Record<string, string> = {
-      buena:   "buena 👍", regular: "regular ⚠️", mala: "mala ❌",
+      buena: "buena 👍", regular: "regular ⚠️", mala: "mala ❌",
     }
 
-    if (readable) {
+    const hasGallons  = ocrGallons !== null
+    const isHigh      = hasGallons && ocrConfidence >= highThreshold
+    const isMed       = hasGallons && !isHigh && ocrConfidence >= medThreshold
+
+    if (isHigh) {
+      // Confirmed reading — offer to register
       await sendTextMessage(msg.from,
         `⛽ *Análisis completado*\n\n` +
         `Lectura detectada: *${ocrGallons!.toFixed(2)} gal*\n` +
         `Confianza: ${ocrConfidence}%\n` +
-        `Calidad de imagen: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
-        (ocrNotes ? `Nota: _${ocrNotes}_\n` : "") +
+        `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+        (ocrNotes ? `_${ocrNotes}_\n` : "") +
         `\n¿Deseas registrar este suministro?\nResponde *registrar* para confirmar.`
       )
-    } else {
-      const reason = ocrGallons === null
-        ? "No pude identificar un display de medidor en la foto."
-        : `Confianza insuficiente (${ocrConfidence}% < ${minConf}% mínimo).`
+      console.log(`[Nova/Image] ── STEP 6 ✅ HIGH confidence reply`)
+
+    } else if (isMed) {
+      // Approximate reading — ask user to confirm before registering
       await sendTextMessage(msg.from,
-        `⚠️ *No pude leer claramente el medidor.*\n\n` +
-        `${reason}\n\n` +
-        `Por favor envía una foto:\n` +
-        `• Más cercana al display\n` +
-        `• Con buena iluminación\n` +
-        `• Sin reflejos ni ángulos extremos`
+        `🔍 *Lectura aproximada*\n\n` +
+        `Detecté aproximadamente *${ocrGallons!.toFixed(2)} gal*\n` +
+        `Confianza: ${ocrConfidence}% (${ocrConfidence < highThreshold ? "debajo del umbral mínimo" : ""})\n` +
+        `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+        (ocrNotes ? `_${ocrNotes}_\n` : "") +
+        `\n¿Confirmas que la lectura es correcta?\n` +
+        `Responde *registrar* para confirmar o envía una foto más clara.`
       )
+      console.log(`[Nova/Image] ── STEP 6 ✅ MEDIUM confidence reply (${ocrConfidence}%)`)
+
+    } else {
+      // Cannot read — ask for better photo
+      const reason = !hasGallons
+        ? "No pude identificar un display de medidor en la foto."
+        : `Confianza muy baja (${ocrConfidence}%) — imagen demasiado degradada.`
+
+      await sendTextMessage(msg.from,
+        `⚠️ *No pude leer el medidor*\n\n` +
+        `${reason}\n\n` +
+        `Para mejores resultados:\n` +
+        `• Acerca más la cámara al display\n` +
+        `• Asegura buena iluminación\n` +
+        `• Evita reflejos y ángulos extremos\n` +
+        `• Enfoca directamente sobre los números`
+      )
+      console.log(`[Nova/Image] ── STEP 6 ✅ LOW confidence reply (${ocrConfidence}%)`)
     }
-    console.log(`[Nova/Image] ── STEP 6 ✅ replied (readable=${readable})`)
   } catch (err) {
     console.error(`[Nova/Image] ── STEP 6 ❌ Reply failed: ${(err as Error).message}`)
   }

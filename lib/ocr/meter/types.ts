@@ -73,3 +73,32 @@ export interface MeterOCRProvider {
    */
   read(image: Buffer): Promise<ReadingStage>
 }
+
+/**
+ * Optional optimization: providers that can detect + read in a single API call
+ * implement this interface. The engine uses it to reduce calls from 2 → 1
+ * for high-confidence images, falling back to a targeted second call only when
+ * confidence is below 85%.
+ *
+ * Set supportsOneShot = true and implement analyzeOnce to opt in.
+ */
+export interface MeterOCRProviderOptimized extends MeterOCRProvider {
+  readonly supportsOneShot: true
+  analyzeOnce(image: Buffer): Promise<{ detection: DetectionStage; reading: ReadingStage }>
+}
+
+export function isOptimizedProvider(p: MeterOCRProvider): p is MeterOCRProviderOptimized {
+  return (p as MeterOCRProviderOptimized).supportsOneShot === true
+}
+
+// ─── Rate limit error ─────────────────────────────────────────────────────────
+// Thrown when a provider returns HTTP 429. Distinct from generic errors so
+// callers can respond with a user-friendly "try again in a few seconds" message
+// instead of "could not read the meter."
+
+export class RateLimitError extends Error {
+  constructor(provider: string, stage: string, attempts: number) {
+    super(`${provider} rate limit (HTTP 429) after ${attempts} attempt(s) at ${stage}`)
+    this.name = "RateLimitError"
+  }
+}

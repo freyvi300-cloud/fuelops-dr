@@ -1,42 +1,63 @@
 /**
  * FuelOps-DR — Gemini Vision Meter OCR Provider
  *
- * Implements MeterOCRProvider with two specialized Gemini calls:
- *   Stage 1 (detect): Locates the numeric display in the photo
- *   Stage 2 (read):   Reads the gallon value from the display
+ * Implements MeterOCRProvider + MeterOCRProviderOptimized.
  *
- * Prompts are engineered for:
- *   - Mechanical dials (rotating drums, odometer-style)
- *   - Digital LCD/LED displays
- *   - Worn/dirty/partially obscured displays
- *   - Various lighting conditions and angles
- *   - Different manufacturers (Bennett, Tokheim, Gilbarco, etc.)
+ * One-shot mode (default):
+ *   Single Gemini call detects the display AND reads the value.
+ *   If confidence ≥ 85%, the engine uses that result directly (1 call total).
+ *   If confidence < 85% AND a display region was found, the engine crops
+ *   and calls provider.read() on the focused crop (2 calls total).
+ *
+ * Rate-limit handling:
+ *   Each API call retries up to MAX_ATTEMPTS (3) with exponential backoff
+ *   (2 s → 4 s). If all attempts fail with HTTP 429, throws RateLimitError.
+ *   Any other HTTP error fails immediately (no retry).
  */
 
-import type { MeterOCRProvider, DetectionStage, ReadingStage } from "./types"
+import type {
+  MeterOCRProviderOptimized,
+  DetectionStage,
+  ReadingStage,
+} from "./types"
+import { RateLimitError } from "./types"
 
-// ─── Stage 1: Detection prompt ────────────────────────────────────────────────
-// Asks Gemini to find the display region using % coordinates.
-// % coordinates are more reliable than pixels across different image sizes.
+// ─── Retry config ─────────────────────────────────────────────────────────────
 
-const DETECT_PROMPT =
-  `You are analyzing a fuel pump or flow meter photo to locate the numeric display.\n\n` +
+const MAX_ATTEMPTS = 3
+const BACKOFF_MS   = [2000, 4000] // delay before attempt 2, then attempt 3
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+
+/**
+ * Combined detect+read prompt.
+ * One call returns both the display bounding box AND the numeric reading.
+ * Reduces API usage by 50 % for high-confidence images.
+ */
+const ANALYZE_PROMPT =
+  `You are a specialist in reading fuel pump and flow meter displays.\n\n` +
   `Return ONLY valid JSON — no markdown, no explanation:\n` +
-  `{"has_meter":true,"display_type":"mechanical","display_region":{"x_pct":15,"y_pct":30,"w_pct":40,"h_pct":20},"notes":"Odometer-style mechanical display"}\n\n` +
+  `{"has_meter":true,"display_type":"mechanical","display_region":{"x_pct":15,"y_pct":30,"w_pct":40,"h_pct":20},"readable":true,"gallons":38.6,"confidence":94,"image_quality":"good","notes":"Odometer-style display clearly shows 38.6"}\n\n` +
   `Fields:\n` +
-  `- has_meter: true if any fuel meter display is visible in the image\n` +
+  `- has_meter: true if any fuel meter display is visible\n` +
   `- display_type: "mechanical" (rotating drums/odometer), "digital" (LCD/LED), or "unknown"\n` +
-  `- display_region: coordinates of ONLY the number area (not the whole meter housing)\n` +
-  `    x_pct/y_pct = top-left corner as percent of image width/height (0–100)\n` +
-  `    w_pct/h_pct = width/height as percent of image dimensions (0–100)\n` +
-  `    Return null if no meter is found\n` +
+  `- display_region: top-left + size of the NUMBER AREA ONLY in % of image dimensions (0–100), or null if no meter\n` +
+  `- readable: true if you can read ANY numeric value, even approximately\n` +
+  `- gallons: exact numeric reading (include decimal if visible), null ONLY if completely unreadable\n` +
+  `- confidence: 0=cannot read, 70=reasonable guess, 95=crystal clear\n` +
+  `- image_quality: "good" (clear/well-lit), "fair" (blurry/dark but readable), "poor" (very degraded)\n` +
   `- notes: one English sentence about what you see\n\n` +
-  `Focus on the numeric display area only. Ignore hoses, labels, branding.`
+  `Critical rules:\n` +
+  `1. ALWAYS attempt to read — do not refuse just because the image is imperfect\n` +
+  `2. If partially visible, read what you can and set confidence accordingly (40–60%)\n` +
+  `3. Mechanical drum displays: read each wheel separately, combine into one number\n` +
+  `4. Worn digits: use context (adjacent visible digits, typical fuel quantities) to infer\n` +
+  `5. Ignore everything except the numeric display — labels, hoses, hands, background\n` +
+  `6. Only set readable=false if you genuinely see zero numeric information`
 
-// ─── Stage 2: Reading prompt ──────────────────────────────────────────────────
-// Engineered to squeeze maximum accuracy even from imperfect images.
-// Key principle: always attempt to read — set confidence accordingly.
-
+/**
+ * Focused read-only prompt — used for the optional second pass on a cropped display.
+ */
 const READ_PROMPT =
   `You are a specialist in reading fuel meter displays. Analyze this image.\n\n` +
   `Return ONLY valid JSON — no markdown, no explanation:\n` +
@@ -44,12 +65,12 @@ const READ_PROMPT =
   `Fields:\n` +
   `- readable: true if you can read ANY numeric value, even approximately\n` +
   `- gallons: the exact numeric reading shown (include decimal if visible), null ONLY if completely unreadable\n` +
-  `- confidence: how certain you are (0=cannot read at all, 70=reasonable guess, 95=crystal clear)\n` +
-  `- image_quality: "good" (clear, well-lit), "fair" (somewhat blurry/dark but readable), "poor" (very degraded)\n` +
+  `- confidence: 0=cannot read, 70=reasonable guess, 95=crystal clear\n` +
+  `- image_quality: "good" (clear/well-lit), "fair" (blurry/dark but readable), "poor" (very degraded)\n` +
   `- notes: one English sentence about readability\n\n` +
   `Critical rules:\n` +
   `1. ALWAYS attempt to read — do not refuse just because the image is imperfect\n` +
-  `2. If partially visible, read what you can and set confidence accordingly (e.g. 40–60%)\n` +
+  `2. If partially visible, read what you can and set confidence accordingly (40–60%)\n` +
   `3. Mechanical drum displays: read each wheel separately, combine into one number\n` +
   `4. Worn digits: use context (adjacent visible digits, typical fuel quantities) to infer\n` +
   `5. Ignore everything except the numeric display — labels, hoses, hands, background\n` +
@@ -57,10 +78,11 @@ const READ_PROMPT =
 
 // ─── Provider implementation ──────────────────────────────────────────────────
 
-export class GeminiMeterProvider implements MeterOCRProvider {
-  readonly name: string
-  readonly #apiKey: string
-  readonly #model:  string
+export class GeminiMeterProvider implements MeterOCRProviderOptimized {
+  readonly name:           string
+  readonly supportsOneShot = true as const
+  readonly #apiKey:        string
+  readonly #model:         string
 
   constructor(apiKey: string, model = "gemini-2.0-flash") {
     this.#apiKey = apiKey
@@ -68,56 +90,88 @@ export class GeminiMeterProvider implements MeterOCRProvider {
     this.name    = `gemini/${model}`
   }
 
-  // ── Shared Gemini caller ────────────────────────────────────────────────────
+  // ── Low-level caller with exponential-backoff retry on 429 ──────────────────
 
-  async #call(imageBuffer: Buffer, prompt: string): Promise<{ text: string; ms: number }> {
+  async #call(
+    imageBuffer: Buffer,
+    prompt:      string,
+    stage:       string,
+  ): Promise<{ text: string; ms: number }> {
     const base64 = imageBuffer.toString("base64")
     const url    = `https://generativelanguage.googleapis.com/v1beta/models/${this.#model}:generateContent?key=${this.#apiKey}`
-    const start  = Date.now()
 
-    const res = await fetch(url, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: "image/jpeg", data: base64 } },
-          ],
-        }],
-        generationConfig: { temperature: 0, maxOutputTokens: 300 },
-      }),
-    })
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        const delay = BACKOFF_MS[attempt - 2]
+        console.log(`[Gemini] ${stage} Intento ${attempt}/${MAX_ATTEMPTS} — esperando ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+      } else {
+        console.log(`[Gemini] ${stage} Intento ${attempt}/${MAX_ATTEMPTS}`)
+      }
 
-    const ms = Date.now() - start
+      const t0  = Date.now()
+      const res = await fetch(url, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inlineData: { mimeType: "image/jpeg", data: base64 } },
+            ],
+          }],
+          generationConfig: { temperature: 0, maxOutputTokens: 400 },
+        }),
+      })
+      const ms = Date.now() - t0
 
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "unknown")
-      throw new Error(`Gemini HTTP ${res.status}: ${errBody.slice(0, 200)}`)
+      // ── 429: log clearly and retry ─────────────────────────────────────────
+      if (res.status === 429) {
+        console.warn(`[Gemini] HTTP 429 — Rate limit exceeded (${stage} intento ${attempt}/${MAX_ATTEMPTS})`)
+        if (attempt === MAX_ATTEMPTS) {
+          throw new RateLimitError(this.name, stage, MAX_ATTEMPTS)
+        }
+        continue // back to top of loop → wait + retry
+      }
+
+      // ── Other HTTP errors: fail fast ───────────────────────────────────────
+      if (!res.ok) {
+        const body = await res.text().catch(() => "unknown")
+        throw new Error(`Gemini HTTP ${res.status} (${stage}): ${body.slice(0, 200)}`)
+      }
+
+      const data = await res.json() as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      }
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+      return { text, ms }
     }
 
-    const data    = await res.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-    }
-    const text    = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
-    return { text, ms }
+    // Unreachable — TypeScript needs an explicit return path after the loop
+    throw new RateLimitError(this.name, stage, MAX_ATTEMPTS)
   }
 
-  // ── Stage 1: Detect display ─────────────────────────────────────────────────
+  // ── analyzeOnce: combined detect + read in a single API call ────────────────
 
-  async detect(image: Buffer): Promise<DetectionStage> {
+  async analyzeOnce(
+    image: Buffer,
+  ): Promise<{ detection: DetectionStage; reading: ReadingStage }> {
     const start = Date.now()
-    console.log(`[OCR/S1/Detect] → ${this.#model} | ${image.length}B`)
+    console.log(`[Gemini] OneShot → ${this.#model} | ${image.length}B`)
 
     try {
-      const { text, ms } = await this.#call(image, DETECT_PROMPT)
-      console.log(`[OCR/S1/Detect] ← ${ms}ms raw: ${text.slice(0, 250)}`)
+      const { text, ms } = await this.#call(image, ANALYZE_PROMPT, "OneShot")
+      console.log(`[Gemini] OneShot ← ${ms}ms raw: ${text.slice(0, 300)}`)
 
       const cleaned = text.replace(/```json\n?|\n?```/g, "").trim()
       const parsed  = JSON.parse(cleaned) as {
         has_meter?:      unknown
         display_type?:   unknown
         display_region?: { x_pct?: unknown; y_pct?: unknown; w_pct?: unknown; h_pct?: unknown } | null
+        readable?:       unknown
+        gallons?:        unknown
+        confidence?:     unknown
+        image_quality?:  unknown
         notes?:          unknown
       }
 
@@ -125,45 +179,69 @@ export class GeminiMeterProvider implements MeterOCRProvider {
       const displayType = (["mechanical","digital","unknown"].includes(String(parsed.display_type)))
         ? parsed.display_type as "mechanical" | "digital" | "unknown"
         : "unknown"
-
       const dr = parsed.display_region
       const boundingBox = (
         dr && typeof dr === "object" &&
         typeof dr.x_pct === "number" && typeof dr.y_pct === "number" &&
         typeof dr.w_pct === "number" && typeof dr.h_pct === "number" &&
         dr.w_pct > 0 && dr.h_pct > 0
-      ) ? {
-        xPct: dr.x_pct!, yPct: dr.y_pct!,
-        wPct: dr.w_pct!, hPct: dr.h_pct!,
-      } : null
+      ) ? { xPct: dr.x_pct!, yPct: dr.y_pct!, wPct: dr.w_pct!, hPct: dr.h_pct! } : null
 
-      const notes = typeof parsed.notes === "string" ? parsed.notes : ""
+      const readable     = parsed.readable === true
+      const gallons      = typeof parsed.gallons    === "number" ? parsed.gallons : null
+      const confidence   = typeof parsed.confidence === "number"
+        ? Math.min(100, Math.max(0, Math.round(parsed.confidence))) : 0
+      const iqRaw        = String(parsed.image_quality ?? "").toLowerCase()
+      const imageQuality = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good"|"fair"|"poor"
+      const notes        = typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : ""
 
+      const elapsed = Date.now() - start
       console.log(
-        `[OCR/S1/Detect] hasDisplay=${hasDisplay} type=${displayType} ` +
-        `bbox=${boundingBox ? `[${boundingBox.xPct},${boundingBox.yPct} ${boundingBox.wPct}×${boundingBox.hPct}%]` : "none"}`
+        `[Gemini] OneShot hasDisplay=${hasDisplay} bbox=${boundingBox ? "yes" : "no"} ` +
+        `readable=${readable} gallons=${gallons} confidence=${confidence}% quality=${imageQuality}`
       )
 
-      return { hasDisplay, displayType, boundingBox, notes, ms: Date.now() - start, rawResponse: text }
-    } catch (err) {
-      const msg = (err as Error).message
-      console.error(`[OCR/S1/Detect] FAILED: ${msg}`)
       return {
-        hasDisplay: false, displayType: "unknown", boundingBox: null,
-        notes: `Detection error: ${msg}`, ms: Date.now() - start, rawResponse: "",
+        detection: { hasDisplay, displayType, boundingBox, notes, ms: elapsed, rawResponse: text },
+        reading:   { readable, gallons, confidence, imageQuality, notes, ms: elapsed, rawResponse: text },
+      }
+
+    } catch (err) {
+      if (err instanceof RateLimitError) throw err  // propagate as-is
+
+      const msg     = (err as Error).message
+      const elapsed = Date.now() - start
+      console.error(`[Gemini] OneShot FAILED: ${msg}`)
+
+      return {
+        detection: {
+          hasDisplay: false, displayType: "unknown", boundingBox: null,
+          notes: `OneShot error: ${msg}`, ms: elapsed, rawResponse: "",
+        },
+        reading: {
+          readable: false, gallons: null, confidence: 0, imageQuality: "poor",
+          notes: `OneShot error: ${msg}`, ms: elapsed, rawResponse: "",
+        },
       }
     }
   }
 
-  // ── Stage 2: Read value ─────────────────────────────────────────────────────
+  // ── detect: required by MeterOCRProvider (delegates to analyzeOnce) ─────────
+
+  async detect(image: Buffer): Promise<DetectionStage> {
+    const { detection } = await this.analyzeOnce(image)
+    return detection
+  }
+
+  // ── read: focused second pass on a cropped display image ────────────────────
 
   async read(image: Buffer): Promise<ReadingStage> {
     const start = Date.now()
-    console.log(`[OCR/S2/Read] → ${this.#model} | ${image.length}B`)
+    console.log(`[Gemini] Read → ${this.#model} | ${image.length}B`)
 
     try {
-      const { text, ms } = await this.#call(image, READ_PROMPT)
-      console.log(`[OCR/S2/Read] ← ${ms}ms raw: ${text.slice(0, 300)}`)
+      const { text, ms } = await this.#call(image, READ_PROMPT, "Read")
+      console.log(`[Gemini] Read ← ${ms}ms raw: ${text.slice(0, 300)}`)
 
       const cleaned = text.replace(/```json\n?|\n?```/g, "").trim()
       const parsed  = JSON.parse(cleaned) as {
@@ -175,28 +253,34 @@ export class GeminiMeterProvider implements MeterOCRProvider {
       }
 
       const readable     = parsed.readable === true
-      const gallons      = typeof parsed.gallons    === "number" ? parsed.gallons    : null
+      const gallons      = typeof parsed.gallons    === "number" ? parsed.gallons : null
       const confidence   = typeof parsed.confidence === "number"
         ? Math.min(100, Math.max(0, Math.round(parsed.confidence))) : 0
       const iqRaw        = String(parsed.image_quality ?? "").toLowerCase()
-      const imageQuality = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good" | "fair" | "poor"
+      const imageQuality = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good"|"fair"|"poor"
       const notes        = typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : ""
 
       console.log(
-        `[OCR/S2/Read] readable=${readable} gallons=${gallons} ` +
-        `confidence=${confidence}% quality=${imageQuality} notes="${notes}"`
+        `[Gemini] Read readable=${readable} gallons=${gallons} ` +
+        `confidence=${confidence}% quality=${imageQuality}`
       )
 
-      return { readable, gallons, confidence, imageQuality, notes, ms: Date.now() - start, rawResponse: text }
+      return {
+        readable, gallons, confidence, imageQuality, notes,
+        ms: Date.now() - start, rawResponse: text,
+      }
+
     } catch (err) {
+      if (err instanceof RateLimitError) throw err  // propagate as-is
+
       const msg = (err as Error).message
-      console.error(`[OCR/S2/Read] FAILED: ${msg}`)
+      console.error(`[Gemini] Read FAILED: ${msg}`)
       return {
         readable:     false,
         gallons:      null,
         confidence:   0,
         imageQuality: "poor",
-        notes:        `Reading error: ${msg}`,
+        notes:        `Read error: ${msg}`,
         ms:           Date.now() - start,
         rawResponse:  "",
       }

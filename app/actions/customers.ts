@@ -115,7 +115,7 @@ export async function getCustomerStats(): Promise<CustomerStats> {
   const [rows, settings] = await Promise.all([
     prisma.customer.findMany({
       select: {
-        status: true, pendingGallons: true,
+        status: true, pendingGallons: true, currentBalance: true,
         priceType: true, fuelPricePerGallon: true, priceDiscount: true,
       },
     }),
@@ -134,10 +134,13 @@ export async function getCustomerStats(): Promise<CustomerStats> {
     settings.defaultFuelPrice,
   ))
 
+  // pendingGallons counter — stored per customer
   const totalPendingGallons = rows.reduce((s, r) => s + r.pendingGallons.toNumber(), 0)
-  const totalPendingAmount  = rows.reduce(
-    (s, r, i) => s + r.pendingGallons.toNumber() * effectivePrices[i], 0
-  )
+
+  // Use currentBalance (authoritative debt) instead of pendingGallons × price,
+  // which diverges after partial payments.
+  const totalPendingAmount = rows.reduce((s, r) => s + r.currentBalance.toNumber(), 0)
+
   const activeIdx = rows.map((r, i) => r.status === CustomerStatus.ACTIVE ? i : -1).filter(i => i >= 0)
   const avgPricePerGallon = activeIdx.length > 0
     ? activeIdx.reduce((s, i) => s + effectivePrices[i], 0) / activeIdx.length

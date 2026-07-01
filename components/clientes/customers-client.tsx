@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import {
   Search, Plus, Bell, ChevronDown, Users, Droplets,
   DollarSign, Tag, Pencil, Eye, MoreHorizontal,
@@ -314,7 +315,8 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
 
   // ── Filtered totals (all filtered, not just page) ─────────────────────────
   const filteredGallons = filtered.reduce((s, c) => s + c.pendingGallons, 0)
-  const filteredTotal   = filtered.reduce((s, c) => s + c.totalPending, 0)
+  // Use currentBalance (authoritative) — totalPending diverges after partial payments
+  const filteredTotal   = filtered.reduce((s, c) => s + c.currentBalance, 0)
 
   // ── Actions ────────────────────────────────────────────────────────────────
   function openCreate() { setEditing(null); setModalOpen(true) }
@@ -594,13 +596,13 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
                             </div>
                           </td>
 
-                          {/* Total pendiente */}
+                          {/* Total pendiente — use currentBalance (authoritative debt) */}
                           <td className="px-4 py-4 text-right">
                             <span className={cn(
                               "font-bold",
-                              c.totalPending > 0 ? "text-slate-900" : "text-slate-400"
+                              c.currentBalance > 0 ? "text-slate-900" : "text-slate-400"
                             )}>
-                              {fmtRD(c.totalPending)}
+                              {fmtRD(c.currentBalance)}
                             </span>
                           </td>
 
@@ -616,10 +618,10 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
                                 className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
                                 <Pencil className="w-4 h-4" />
                               </button>
-                              <button title="Ver detalles"
-                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+                              <Link href={`/clientes/${c.id}`} title="Ver detalles"
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors inline-flex">
                                 <Eye className="w-4 h-4" />
-                              </button>
+                              </Link>
                               <button
                                 onClick={() => handleToggle(c)}
                                 title={c.status === "ACTIVE" ? "Desactivar" : "Activar"}

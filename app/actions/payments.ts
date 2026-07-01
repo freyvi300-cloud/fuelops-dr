@@ -202,6 +202,7 @@ export async function createPayment(data: PaymentFormData): Promise<PaymentResul
   revalidatePath("/cobros")
   revalidatePath("/facturas")
   revalidatePath("/clientes")
+  revalidatePath("/clientes", "layout")  // revalidates /clientes/[id] detail pages
   revalidatePath("/")
 
   return {

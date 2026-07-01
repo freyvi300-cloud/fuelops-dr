@@ -7,8 +7,8 @@ import {
   Receipt, CircleDollarSign, BarChart3, UserCog, Settings,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import ThemeToggle from "@/components/theme/theme-toggle"
 
-// Premium spring-like ease: decelerates fast then settles softly
 const SPRING = "cubic-bezier(0.22, 1, 0.36, 1)"
 
 const navItems = [
@@ -24,19 +24,15 @@ const navItems = [
   { href: "/configuracion", label: "Configuración",        icon: Settings,        primary: false },
 ]
 
-// ── Label that fades + slides in when sidebar expands ────────────────────────
 function NavLabel({ children }: { children: React.ReactNode }) {
   return (
     <span
-      // Width expansion plays first (450ms), then label fades in (300ms, 80ms offset)
       style={{
         transition: `opacity 280ms ${SPRING} 80ms, transform 300ms ${SPRING} 80ms`,
       }}
       className={cn(
         "whitespace-nowrap overflow-hidden leading-none",
-        // Collapsed: invisible and shifted left
         "opacity-0 -translate-x-1 pointer-events-none",
-        // Expanded: fully visible, in place
         "group-hover:opacity-100 group-hover:translate-x-0 group-hover:pointer-events-auto",
       )}
     >
@@ -45,7 +41,6 @@ function NavLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-// ── Wordmark / sub-text block ─────────────────────────────────────────────────
 function FadeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <div
@@ -64,16 +59,11 @@ function FadeBlock({ children, className }: { children: React.ReactNode; classNa
   )
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 export default function Sidebar() {
   const pathname = usePathname()
 
   return (
     <aside
-      // Width: 64 px collapsed → 224 px expanded.
-      // Flex layout naturally pushes the sibling content area, so both elements
-      // move as one coordinated animation — no JS / context needed.
       style={{
         transition: `width 450ms ${SPRING}`,
         willChange: "width",
@@ -81,18 +71,15 @@ export default function Sidebar() {
       className={cn(
         "group hidden md:flex flex-col min-h-screen shrink-0 overflow-hidden",
         "w-16 hover:w-56",
-        "bg-[#1a3fa0]",
-        "shadow-[2px_0_12px_rgba(0,0,0,0.10)]",
+        "bg-[#1a3fa0] dark:bg-[#0f2660]",
+        "shadow-[2px_0_12px_rgba(0,0,0,0.10)] dark:shadow-[2px_0_20px_rgba(0,0,0,0.35)]",
       )}
     >
-      {/* ── Logo row ─────────────────────────────────────────────── */}
+      {/* Logo row */}
       <div className="flex items-center gap-3 px-3 py-[1.1rem] border-b border-white/10">
-        {/* Icon: always visible */}
         <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm shrink-0">
           <Droplets className="w-5 h-5 text-[#1a3fa0]" />
         </div>
-
-        {/* Wordmark */}
         <FadeBlock>
           <p className="text-white font-bold text-sm leading-tight">FuelOps-DR</p>
           <p className="text-blue-200 text-[11px] leading-tight mt-0.5">
@@ -101,7 +88,7 @@ export default function Sidebar() {
         </FadeBlock>
       </div>
 
-      {/* ── Navigation ───────────────────────────────────────────── */}
+      {/* Navigation */}
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
         {navItems.map(({ href, label, icon: Icon, primary }) => {
           const active =
@@ -123,12 +110,7 @@ export default function Sidebar() {
                     : "bg-white/20 text-white hover:bg-white/30",
                 )}
               >
-                <Icon
-                  className={cn(
-                    "w-5 h-5 shrink-0",
-                    active ? "text-[#1a3fa0]" : "text-white",
-                  )}
-                />
+                <Icon className={cn("w-5 h-5 shrink-0", active ? "text-[#1a3fa0]" : "text-white")} />
                 <NavLabel>{label}</NavLabel>
               </Link>
             )
@@ -147,20 +129,25 @@ export default function Sidebar() {
                   : "text-blue-100/80 hover:bg-white/10 hover:text-white",
               )}
             >
-              <Icon
-                className={cn(
-                  "w-5 h-5 shrink-0",
-                  active ? "text-white" : "text-blue-200",
-                )}
-              />
+              <Icon className={cn("w-5 h-5 shrink-0", active ? "text-white" : "text-blue-200")} />
               <NavLabel>{label}</NavLabel>
             </Link>
           )
         })}
       </nav>
 
-      {/* ── Company footer ───────────────────────────────────────── */}
-      <div className="mx-2 mb-4">
+      {/* Footer: company tag + theme toggle */}
+      <div className="mx-2 mb-4 space-y-2">
+        {/* Theme toggle — visible only when expanded */}
+        <div
+          style={{
+            transition: `opacity 200ms ${SPRING} 80ms`,
+          }}
+          className="opacity-0 group-hover:opacity-100 px-1"
+        >
+          <ThemeToggle compact />
+        </div>
+
         <div className="flex items-center gap-3 p-3 bg-white/10 rounded-xl">
           <div className="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center shrink-0">
             <Truck className="w-4 h-4 text-white" />

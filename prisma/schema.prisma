@@ -294,3 +294,19 @@ model WhatsAppImage {
   ocrRawText     String?   @db.Text             // full raw JSON from Gemini
   ocrProcessedAt DateTime?                      // when OCR ran
 }
+
+// ─── WhatsApp Conversation State ─────────────────────────────────────────────
+// Persists the active conversational state for each WhatsApp phone number.
+// Survives server restarts. Expires automatically via expiresAt.
+
+model WhatsAppConversation {
+  id          String   @id @default(cuid())
+  phoneNumber String   @unique           // WA phone number (msg.from)
+  state       String                     // ConversationState enum value
+  payload     Json                       // SupplyFlowPayload — grows as flow progresses
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  expiresAt   DateTime                   // auto-expire stale conversations
+
+  @@map("whatsapp_conversations")
+}

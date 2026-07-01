@@ -18,6 +18,7 @@ import { sendTextMessage, downloadMedia } from "./client"
 import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath, updateOcrResult } from "./media"
 import { analyzeMeterImage } from "./analyzeMeterImage"
 import { RateLimitError, ModelResponseError } from "@/lib/ocr/meter/types"
+import { processConversation, startConversation } from "./conversation/index"
 import type { IncomingMessage } from "./types"
 import {
   getInventoryStatus,
@@ -328,34 +329,38 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
     const hasGallons  = ocrGallons !== null
     const isHigh      = hasGallons && ocrConfidence >= highThreshold
     const isMed       = hasGallons && !isHigh && ocrConfidence >= medThreshold
+    const isReadable  = isHigh || isMed
 
-    if (isHigh) {
-      // Confirmed reading — offer to register
+    if (isReadable) {
+      // ── Start conversation flow ────────────────────────────────────────────
+      // Save state to DB so the user's next reply is intercepted by the machine
+      await startConversation(msg.from, {
+        mediaId:    msg.imageId!,
+        imageUrl:   storageUrl,
+        gallons:    ocrGallons!,
+        confidence: ocrConfidence,
+        quality:    ocrQuality,
+        ocrNotes:   ocrNotes,
+        provider:   ocrProvider,
+      })
+
+      const confidenceNote = isHigh
+        ? `Confianza: ${ocrConfidence}%`
+        : `Confianza: ${ocrConfidence}% _(aproximada — confirma si es correcta)_`
+
       await sendTextMessage(msg.from,
-        `⛽ *Análisis completado*\n\n` +
-        `Lectura detectada: *${ocrGallons!.toFixed(2)} gal*\n` +
-        `Confianza: ${ocrConfidence}%\n` +
+        `⛽ *Lectura del medidor*\n\n` +
+        `Galones detectados: *${ocrGallons!.toFixed(2)} gal*\n` +
+        `${confidenceNote}\n` +
         `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
         (ocrNotes ? `_${ocrNotes}_\n` : "") +
-        `\n¿Deseas registrar este suministro?\nResponde *registrar* para confirmar.`
+        `\n¿Deseas registrar este suministro?\n` +
+        `Responde *registrar* para confirmar o *cancelar* para anular.`
       )
-      console.log(`[Nova/Image] ── STEP 6 ✅ HIGH confidence reply`)
-
-    } else if (isMed) {
-      // Approximate reading — ask user to confirm before registering
-      await sendTextMessage(msg.from,
-        `🔍 *Lectura aproximada*\n\n` +
-        `Detecté aproximadamente *${ocrGallons!.toFixed(2)} gal*\n` +
-        `Confianza: ${ocrConfidence}% (${ocrConfidence < highThreshold ? "debajo del umbral mínimo" : ""})\n` +
-        `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
-        (ocrNotes ? `_${ocrNotes}_\n` : "") +
-        `\n¿Confirmas que la lectura es correcta?\n` +
-        `Responde *registrar* para confirmar o envía una foto más clara.`
-      )
-      console.log(`[Nova/Image] ── STEP 6 ✅ MEDIUM confidence reply (${ocrConfidence}%)`)
+      console.log(`[Nova/Image] ── STEP 6 ✅ readable reply — conversation started (${ocrConfidence}%)`)
 
     } else {
-      // Cannot read — ask for better photo
+      // Cannot read — ask for better photo (no conversation state created)
       const reason = !hasGallons
         ? "No pude identificar un display de medidor en la foto."
         : `Confianza muy baja (${ocrConfidence}%) — imagen demasiado degradada.`
@@ -394,6 +399,21 @@ export async function handleIncomingMessage(msg: IncomingMessage): Promise<void>
   if (msg.type !== "text" || !msg.text) {
     await sendTextMessage(msg.from, NON_TEXT_TEXT)
     return
+  }
+
+  // ── Active conversation — intercept BEFORE command parsing ─────────────────
+  // If this user has a pending conversation state (e.g. WAITING_CONFIRMATION),
+  // route the message through the state machine instead of the command registry.
+  try {
+    const conversationReply = await processConversation(msg.from, msg.text)
+    if (conversationReply !== null) {
+      console.log(`[Nova] ${who} → conversation handled (state machine)`)
+      await sendTextMessage(msg.from, conversationReply)
+      return
+    }
+  } catch (err) {
+    console.error(`[Nova] ${who} → conversation processing error:`, (err as Error).message)
+    // Fall through to normal command handling rather than silently failing
   }
 
   const normalised = msg.text.toLowerCase().trim()

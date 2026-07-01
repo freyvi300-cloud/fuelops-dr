@@ -5,7 +5,6 @@
  *
  *   Layer 1 — Structured output: responseSchema forces Gemini to output JSON
  *             matching the schema exactly. No fences, no preamble, no truncation.
- *             This is the primary fix for "Unterminated string" errors.
  *
  *   Layer 2 — Robust parser: if Gemini somehow returns markdown or prose,
  *             parseGeminiJSON() strips fences, extracts the first {...} block,
@@ -15,6 +14,12 @@
  *             ModelResponseError (not a generic Error). commands.ts catches
  *             it and replies "⚠️ Ocurrió un error interno..." — never
  *             "No pude leer el medidor" for a parse-level failure.
+ *
+ * Digit accuracy strategy:
+ *   Gemini returns digits[] + decimal_position instead of a final number.
+ *   Application code assembles the value — eliminating the model's tendency
+ *   to "collapse" leading zeros (0100.0 → 10.0) when inferring the total.
+ *   If the assembled result fails consistency checks, one strict retry fires.
  *
  * Rate-limit handling: exponential backoff (2 s → 4 s), max 3 attempts.
  */
@@ -31,25 +36,113 @@ import { RateLimitError, ModelResponseError } from "./types"
 const MAX_ATTEMPTS      = 3
 const BACKOFF_MS        = [2000, 4000]
 
-// maxOutputTokens: kept at 1024 (well above the ~150 tokens a full JSON response needs).
-// The real cause of MAX_TOKENS truncation on Gemini 2.5 Flash is the internal
-// "thinking" step — the model reasons silently before outputting and those tokens
-// count against this budget. thinkingBudget: 0 disables thinking entirely,
-// giving all 1024 tokens to the actual JSON output.
+// maxOutputTokens: 1024 is well above the ~200 tokens a digits-array response needs.
+// thinkingBudget: 0 disables Gemini 2.5 Flash internal reasoning, preserving
+// all output tokens for the actual JSON.
 const MAX_OUTPUT_TOKENS  = 1024
-const THINKING_BUDGET    = 0     // disable thinking to preserve output token budget
+const THINKING_BUDGET    = 0
+
+// Fuel meters always have at least 4 wheels (integer + decimal).
+// If Gemini returns fewer digits, the reading was collapsed — trigger retry.
+const MIN_WHEEL_COUNT = 4
+
+// ─── Digit assembly ───────────────────────────────────────────────────────────
+
+/**
+ * Build the numeric value from the wheel-by-wheel digit array.
+ *
+ * digits          = ["0","1","0","0","0"]
+ * decimal_position = 1   → last 1 digit is fractional
+ *
+ * Result: "0100" + "." + "0" = 0100.0 → 100.0
+ *
+ * Leading zeros in the integer part are intentionally preserved during
+ * assembly — parseFloat drops them, which is the correct numeric result
+ * (0100.0 and 100.0 are the same gallons). The key difference from the
+ * old approach is that Gemini is no longer allowed to collapse them while
+ * inferring the number — it reports each wheel, and we do the math.
+ */
+function assembleGallons(digits: string[], decimalPosition: number): number | null {
+  if (!digits.length) return null
+
+  const clampedDec = Math.max(0, Math.min(decimalPosition, digits.length - 1))
+  const splitAt    = digits.length - clampedDec
+  const intPart    = digits.slice(0, splitAt).join("") || "0"
+  const decPart    = digits.slice(splitAt).join("")
+
+  const str = decPart.length > 0 ? `${intPart}.${decPart}` : intPart
+  const num = parseFloat(str)
+  return isNaN(num) ? null : num
+}
+
+/**
+ * Validate that the digit array is self-consistent.
+ *
+ * Checks:
+ *   1. All elements are single 0-9 characters.
+ *   2. Total wheel count ≥ MIN_WHEEL_COUNT (business rule: fuel meters have ≥4 wheels).
+ *   3. Assembled integer does not have MORE digits than integer-wheel slots
+ *      (would mean Gemini invented digits — practically impossible but caught anyway).
+ */
+function validateDigits(
+  digits: string[],
+  decimalPosition: number,
+  assembled: number,
+): { valid: boolean; reason?: string } {
+  if (digits.length === 0) {
+    return { valid: false, reason: "empty digits array" }
+  }
+
+  if (digits.some(d => !/^[0-9]$/.test(d))) {
+    return { valid: false, reason: `non-numeric wheel value: [${digits.join(",")}]` }
+  }
+
+  if (digits.length < MIN_WHEEL_COUNT) {
+    return {
+      valid:  false,
+      reason: `only ${digits.length} wheels reported, expected ≥${MIN_WHEEL_COUNT} — possible leading-zero collapse`,
+    }
+  }
+
+  const intWheelCount  = digits.length - Math.max(0, decimalPosition)
+  const assembledIntStr = Math.floor(assembled).toString()
+  if (assembledIntStr.length > intWheelCount) {
+    return {
+      valid:  false,
+      reason: `assembled integer ${assembledIntStr} (${assembledIntStr.length} digits) exceeds ${intWheelCount} integer wheel slots`,
+    }
+  }
+
+  return { valid: true }
+}
 
 // ─── Structured output schemas ────────────────────────────────────────────────
-// responseSchema + responseMimeType: "application/json" forces Gemini to emit
-// valid JSON that matches the schema. No markdown, no truncation mid-field.
+
+const DIGIT_FIELDS = {
+  readable: { type: "boolean" },
+  digits: {
+    type:     "array",
+    items:    { type: "string" },
+    nullable: true,
+  },
+  decimal_position: {
+    type:     "integer",
+    nullable: true,
+  },
+  confidence:    { type: "integer" },
+  image_quality: { type: "string", enum: ["good", "fair", "poor"] },
+  notes:         { type: "string" },
+}
+
+const DIGIT_REQUIRED = ["readable", "digits", "decimal_position", "confidence", "image_quality", "notes"]
 
 const ANALYZE_SCHEMA = {
   type: "object",
   properties: {
-    has_meter:      { type: "boolean" },
-    display_type:   { type: "string", enum: ["mechanical", "digital", "unknown"] },
+    has_meter:    { type: "boolean" },
+    display_type: { type: "string", enum: ["mechanical", "digital", "unknown"] },
     display_region: {
-      type: "object",
+      type:     "object",
       nullable: true,
       properties: {
         x_pct: { type: "number" },
@@ -59,103 +152,90 @@ const ANALYZE_SCHEMA = {
       },
       required: ["x_pct", "y_pct", "w_pct", "h_pct"],
     },
-    readable:      { type: "boolean" },
-    // gallons is required — Gemini must always emit this field.
-    // nullable: true allows null only when truly no digit is visible.
-    gallons:       { type: "number",  nullable: true },
-    confidence:    { type: "integer" },
-    image_quality: { type: "string",  enum: ["good", "fair", "poor"] },
-    notes:         { type: "string" },
+    ...DIGIT_FIELDS,
   },
-  required: ["has_meter", "display_type", "readable", "gallons", "confidence", "image_quality", "notes"],
+  required: ["has_meter", "display_type", ...DIGIT_REQUIRED],
 }
 
 const READ_SCHEMA = {
-  type: "object",
-  properties: {
-    readable:      { type: "boolean" },
-    // gallons is required — Gemini must always emit this field.
-    // nullable: true allows null only when truly no digit is visible.
-    gallons:       { type: "number",  nullable: true },
-    confidence:    { type: "integer" },
-    image_quality: { type: "string",  enum: ["good", "fair", "poor"] },
-    notes:         { type: "string" },
-  },
-  required: ["readable", "gallons", "confidence", "image_quality", "notes"],
+  type:       "object",
+  properties: DIGIT_FIELDS,
+  required:   DIGIT_REQUIRED,
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
-// ANALYZE_PROMPT — combined locate + read in one call.
-// Written as a pure digit-extraction task, not image description.
-// Key principle: gallons is ALWAYS required. The model must commit to a number
-// or explicitly return null — it cannot skip the field or defer.
+const DIGIT_INSTRUCTIONS =
+  `DIGIT READING RULES — read EACH wheel or digit position separately:\n` +
+  `  1. IDENTIFY every wheel/digit position from LEFT to RIGHT. Count them all.\n` +
+  `  2. For EACH position, record the single character it shows (0–9). One string per wheel.\n` +
+  `  3. NEVER collapse, skip, or ignore a wheel — even if it shows "0".\n` +
+  `  4. NEVER infer the total numeric value. Report only what each wheel shows.\n` +
+  `  5. decimal_position = how many wheels from the RIGHT are after the decimal point.\n` +
+  `     Example: display "0 1 0 0 . 0" → digits=["0","1","0","0","0"] decimal_position=1\n` +
+  `     Example: display "3 8 . 6"    → digits=["3","8","6"] decimal_position=1\n` +
+  `     Example: display "1 0 2"      → digits=["1","0","2"] decimal_position=0\n\n` +
+  `FIELDS:\n` +
+  `  readable         → true if you can read at least one wheel\n` +
+  `  digits           → array of strings, one entry per wheel, left to right\n` +
+  `  decimal_position → integer: wheels from the right that are fractional (0 = whole number)\n` +
+  `  confidence       → 0–100: certainty (95=all wheels clear, 70=some estimated, 40=mostly guessed)\n` +
+  `  image_quality    → "good" / "fair" / "poor"\n` +
+  `  notes            → ≤60 chars: e.g. "5 wheels: 0,1,0,0 clear | wheel 3 estimated"\n\n` +
+  `STRICT RULES:\n` +
+  `  • If readable=true, digits MUST be a non-empty array — never null.\n` +
+  `  • If a wheel is partially visible, estimate its digit and lower confidence.\n` +
+  `  • digits=null only when you cannot see a single wheel anywhere.`
+
 const ANALYZE_PROMPT =
   `TASK: OCR extraction from a fuel meter photo. You are a digit reader, not an image describer.\n\n` +
   `STEP 1 — Locate the display:\n` +
   `  Find the numeric counter (odometer drums, LCD, or LED digits).\n` +
   `  Record its bounding box as % of image width/height.\n\n` +
-  `STEP 2 — Read the number:\n` +
-  `  Read EVERY digit you can see, left to right.\n` +
-  `  For mechanical drum displays: read each rotating wheel as one digit.\n` +
-  `  For partially obscured digits: estimate from the visible portion and adjacent context.\n` +
-  `  Combine all digits into a single decimal number (e.g. 38.6, 102, 7.50).\n` +
-  `  DO NOT describe the meter. DO NOT explain what you see. Just output the number.\n\n` +
-  `OUTPUT RULES — you MUST always populate every field:\n` +
-  `  has_meter    → true if a numeric counter is visible anywhere in the image\n` +
+  `STEP 2 — Read wheel by wheel:\n` +
+  `${DIGIT_INSTRUCTIONS}\n` +
+  `OUTPUT RULES:\n` +
+  `  has_meter    → true if a numeric counter is visible anywhere\n` +
   `  display_type → "mechanical" / "digital" / "unknown"\n` +
-  `  display_region → bounding box of the digit area in % (x_pct, y_pct, w_pct, h_pct), or null\n` +
-  `  readable     → true if you extracted any numeric value, even a partial estimate\n` +
-  `  gallons      → the numeric reading as a decimal (38.6, 102.0, 7.5). ` +
-                   `MUST be a number if readable=true. ` +
-                   `Set to null ONLY if you cannot distinguish a single digit anywhere.\n` +
-  `  confidence   → integer 0–100: how certain you are of the exact value ` +
-                   `(95=all digits clear, 70=some digits estimated, 40=mostly guessed, 0=no digits seen)\n` +
-  `  image_quality → "good" / "fair" / "poor"\n` +
-  `  notes        → ≤60 chars: which digits were clear vs. estimated (e.g. "digits 1-3 clear, digit 4 estimated")\n\n` +
-  `STRICT RULES:\n` +
-  `  • If readable=true, gallons MUST be a number — never null.\n` +
-  `  • If you see partial digits, commit to your best reading and lower confidence.\n` +
-  `  • Ignore brand labels, hoses, hands, and background — only read the digit counter.\n` +
-  `  • gallons=null is only valid when you see zero recognizable digits.`
+  `  display_region → bounding box (x_pct, y_pct, w_pct, h_pct in %), or null\n` +
+  `  [wheel reading fields as above]`
 
-// READ_PROMPT — focused second pass on a cropped display image.
-// Even more direct: the image IS the display, just read the digits.
 const READ_PROMPT =
-  `TASK: Read the number shown on this fuel meter display. Pure digit extraction.\n\n` +
-  `The image shows a meter counter — either rotating mechanical drums or an LCD/LED display.\n` +
-  `Read every digit left to right and return the complete numeric value.\n\n` +
-  `OUTPUT RULES — all fields are required:\n` +
-  `  readable     → true if you can extract any numeric value\n` +
-  `  gallons      → the reading as a decimal number (e.g. 38.6, 102.0). ` +
-                   `MUST be a number if readable=true. ` +
-                   `null ONLY if you cannot identify a single digit.\n` +
-  `  confidence   → 0–100: certainty of the exact value ` +
-                   `(95=all digits clear, 70=some estimated, 40=mostly guessed)\n` +
-  `  image_quality → "good" / "fair" / "poor"\n` +
-  `  notes        → ≤60 chars describing which digits were clear vs. estimated\n\n` +
-  `STRICT RULES:\n` +
-  `  • readable=true means gallons MUST be a number, never null.\n` +
-  `  • Partial reading is better than no reading — estimate missing digits, lower confidence.\n` +
-  `  • Do not describe the device. Output only the extracted number and confidence.\n` +
-  `  • gallons=null only if you genuinely see no recognizable digit anywhere.`
+  `TASK: Read the fuel meter display. Wheel-by-wheel digit extraction.\n\n` +
+  `The image shows a meter counter — rotating mechanical drums or an LCD/LED display.\n\n` +
+  `${DIGIT_INSTRUCTIONS}`
+
+// Strict retry prompts — used after a validation failure on the first attempt.
+// Emphasise the wheel count check to prevent leading-zero collapse.
+const ANALYZE_PROMPT_STRICT =
+  `STRICT RETRY — previous reading may have missed wheels.\n\n` +
+  `BEFORE reading digits:\n` +
+  `  COUNT every visible rotating drum / LCD digit position from LEFT to RIGHT.\n` +
+  `  Write down the total count. Then fill digits[] with EXACTLY that many entries.\n` +
+  `  digits.length MUST equal your wheel count. If they differ, you missed a wheel.\n\n` +
+  ANALYZE_PROMPT
+
+const READ_PROMPT_STRICT =
+  `STRICT RETRY — previous reading may have missed wheels.\n\n` +
+  `BEFORE reading digits:\n` +
+  `  COUNT every visible rotating drum / LCD digit position from LEFT to RIGHT.\n` +
+  `  Write down the total count. Then fill digits[] with EXACTLY that many entries.\n` +
+  `  digits.length MUST equal your wheel count. If they differ, you missed a wheel.\n\n` +
+  READ_PROMPT
 
 // ─── Robust JSON parser (safety net — structured output should make this rare) ─
 
 type ParsedObject = Record<string, unknown>
 
 function parseGeminiJSON(raw: string, stage: string): ParsedObject {
-  // Always log the full raw response first
   console.log(`[Gemini] RAW RESPONSE (${stage}, ${raw.length} chars):`)
   console.log(raw)
 
-  // Layer 1: strip markdown code fences
   let text = raw
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/i, "")
     .trim()
 
-  // Layer 2: extract first {...} block
   const start = text.indexOf("{")
   const end   = text.lastIndexOf("}")
   if (start !== -1 && end > start) {
@@ -165,7 +245,6 @@ function parseGeminiJSON(raw: string, stage: string): ParsedObject {
     console.warn(`[Gemini] JSON PARSE FAILED: no closing brace found — attempting repair (${stage})`)
   }
 
-  // Layer 3: direct parse
   try {
     const result = JSON.parse(text) as ParsedObject
     console.log(`[Gemini] Parsed JSON (${stage}):`, JSON.stringify(result))
@@ -174,7 +253,6 @@ function parseGeminiJSON(raw: string, stage: string): ParsedObject {
     console.warn(`[Gemini] JSON PARSE FAILED (${stage}) direct: ${(e1 as Error).message}`)
   }
 
-  // Layer 4: repair truncated JSON then retry
   const repaired = repairTruncatedJSON(text)
   console.warn(`[Gemini] JSON PARSE FAILED (${stage}) attempting repair: ${repaired.slice(0, 200)}`)
   try {
@@ -185,7 +263,6 @@ function parseGeminiJSON(raw: string, stage: string): ParsedObject {
     console.error(`[Gemini] JSON PARSE FAILED (${stage}) repair also failed: ${(e2 as Error).message}`)
   }
 
-  // All attempts exhausted — throw ModelResponseError so caller can respond correctly
   throw new ModelResponseError(stage, raw)
 }
 
@@ -222,6 +299,56 @@ function repairTruncatedJSON(text: string): string {
   truncated += "]".repeat(Math.max(0, openBrackets))
   truncated += "}".repeat(Math.max(0, openBraces))
   return truncated
+}
+
+// ─── Digit extraction helper ──────────────────────────────────────────────────
+
+interface DigitResult {
+  readable:        boolean
+  digits:          string[] | null
+  decimalPosition: number
+  confidence:      number
+  imageQuality:    "good" | "fair" | "poor"
+  notes:           string
+  gallons:         number | null  // assembled from digits by application code
+}
+
+function extractDigitResult(parsed: ParsedObject, stage: string): DigitResult {
+  const readable        = parsed.readable === true
+  const rawDigits       = Array.isArray(parsed.digits) ? parsed.digits as unknown[] : null
+  const digits          = rawDigits
+    ? rawDigits.map(d => String(d).trim()).filter(d => /^[0-9]$/.test(d))
+    : null
+  const decimalPosition = typeof parsed.decimal_position === "number"
+    ? Math.max(0, Math.round(parsed.decimal_position as number))
+    : 0
+  const confidence      = typeof parsed.confidence === "number"
+    ? Math.min(100, Math.max(0, Math.round(parsed.confidence as number)))
+    : 0
+  const iqRaw           = String(parsed.image_quality ?? "").toLowerCase()
+  const imageQuality    = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good"|"fair"|"poor"
+  const notes           = typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : ""
+
+  let gallons: number | null = null
+  if (readable && digits && digits.length > 0) {
+    gallons = assembleGallons(digits, decimalPosition)
+    const validation = validateDigits(digits, decimalPosition, gallons ?? 0)
+    if (!validation.valid) {
+      console.warn(`[Gemini] ${stage} digit validation FAILED: ${validation.reason}`)
+      console.warn(`[Gemini] ${stage} digits=[${digits.join(",")}] decimal_position=${decimalPosition} assembled=${gallons}`)
+    } else {
+      console.log(`[Gemini] ${stage} digit validation OK: digits=[${digits.join(",")}] decimal_position=${decimalPosition} assembled=${gallons}`)
+    }
+  }
+
+  return { readable, digits, decimalPosition, confidence, imageQuality, notes, gallons }
+}
+
+function needsStrictRetry(digits: string[] | null, decimalPosition: number, assembled: number | null): boolean {
+  if (!digits || digits.length === 0) return false
+  if (assembled === null) return true
+  const validation = validateDigits(digits, decimalPosition, assembled)
+  return !validation.valid
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -348,7 +475,6 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
       const { text, ms } = await this.#call(image, ANALYZE_PROMPT, "OneShot", ANALYZE_SCHEMA)
       console.log(`[Gemini] OneShot ← ${ms}ms`)
 
-      // parseGeminiJSON logs [Gemini] RAW RESPONSE and [Gemini] Parsed JSON internally
       const parsed = parseGeminiJSON(text, "OneShot")
 
       const hasDisplay  = parsed.has_meter === true
@@ -363,27 +489,48 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
         dr.w_pct > 0 && dr.h_pct > 0
       ) ? { xPct: dr.x_pct!, yPct: dr.y_pct!, wPct: dr.w_pct!, hPct: dr.h_pct! } : null
 
-      const readable     = parsed.readable === true
-      const gallons      = typeof parsed.gallons    === "number" ? parsed.gallons : null
-      const confidence   = typeof parsed.confidence === "number"
-        ? Math.min(100, Math.max(0, Math.round(parsed.confidence as number))) : 0
-      const iqRaw        = String(parsed.image_quality ?? "").toLowerCase()
-      const imageQuality = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good"|"fair"|"poor"
-      const notes        = typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : ""
+      let result = extractDigitResult(parsed, "OneShot")
+
+      // Strict retry if digit validation failed
+      if (result.readable && needsStrictRetry(result.digits, result.decimalPosition, result.gallons)) {
+        console.warn(`[Gemini] OneShot digit validation failed — firing strict retry`)
+        try {
+          const { text: retryText } = await this.#call(image, ANALYZE_PROMPT_STRICT, "OneShot-Strict", ANALYZE_SCHEMA)
+          const retryParsed = parseGeminiJSON(retryText, "OneShot-Strict")
+          const retryResult = extractDigitResult(retryParsed, "OneShot-Strict")
+          if (!needsStrictRetry(retryResult.digits, retryResult.decimalPosition, retryResult.gallons)) {
+            console.log(`[Gemini] OneShot-Strict retry improved result — using strict reading`)
+            result = retryResult
+          } else {
+            console.warn(`[Gemini] OneShot-Strict retry still inconsistent — keeping original`)
+          }
+        } catch (retryErr) {
+          console.warn(`[Gemini] OneShot-Strict retry failed: ${(retryErr as Error).message}`)
+        }
+      }
 
       const elapsed = Date.now() - start
       console.log(
         `[Gemini] OneShot RESULT: hasDisplay=${hasDisplay} bbox=${boundingBox ? "yes" : "no"} ` +
-        `readable=${readable} gallons=${gallons} confidence=${confidence}% quality=${imageQuality}`
+        `readable=${result.readable} digits=[${(result.digits ?? []).join(",")}] ` +
+        `decimalPos=${result.decimalPosition} gallons=${result.gallons} confidence=${result.confidence}% quality=${result.imageQuality}`
       )
 
       return {
-        detection: { hasDisplay, displayType, boundingBox, notes, ms: elapsed, rawResponse: text },
-        reading:   { readable, gallons, confidence, imageQuality, notes, ms: elapsed, rawResponse: text },
+        detection: { hasDisplay, displayType, boundingBox, notes: result.notes, ms: elapsed, rawResponse: text },
+        reading:   {
+          readable:     result.readable,
+          gallons:      result.gallons,
+          confidence:   result.confidence,
+          imageQuality: result.imageQuality,
+          notes:        result.notes,
+          ms:           elapsed,
+          rawResponse:  text,
+        },
       }
 
     } catch (err) {
-      if (err instanceof RateLimitError)    throw err
+      if (err instanceof RateLimitError)     throw err
       if (err instanceof ModelResponseError) throw err
 
       const msg     = (err as Error).message
@@ -421,27 +568,43 @@ export class GeminiMeterProvider implements MeterOCRProviderOptimized {
       console.log(`[Gemini] Read ← ${ms}ms`)
 
       const parsed = parseGeminiJSON(text, "Read")
+      let result   = extractDigitResult(parsed, "Read")
 
-      const readable     = parsed.readable === true
-      const gallons      = typeof parsed.gallons    === "number" ? parsed.gallons : null
-      const confidence   = typeof parsed.confidence === "number"
-        ? Math.min(100, Math.max(0, Math.round(parsed.confidence as number))) : 0
-      const iqRaw        = String(parsed.image_quality ?? "").toLowerCase()
-      const imageQuality = (["good","fair","poor"].includes(iqRaw) ? iqRaw : "poor") as "good"|"fair"|"poor"
-      const notes        = typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : ""
+      // Strict retry if digit validation failed
+      if (result.readable && needsStrictRetry(result.digits, result.decimalPosition, result.gallons)) {
+        console.warn(`[Gemini] Read digit validation failed — firing strict retry`)
+        try {
+          const { text: retryText } = await this.#call(image, READ_PROMPT_STRICT, "Read-Strict", READ_SCHEMA)
+          const retryParsed = parseGeminiJSON(retryText, "Read-Strict")
+          const retryResult = extractDigitResult(retryParsed, "Read-Strict")
+          if (!needsStrictRetry(retryResult.digits, retryResult.decimalPosition, retryResult.gallons)) {
+            console.log(`[Gemini] Read-Strict retry improved result — using strict reading`)
+            result = retryResult
+          } else {
+            console.warn(`[Gemini] Read-Strict retry still inconsistent — keeping original`)
+          }
+        } catch (retryErr) {
+          console.warn(`[Gemini] Read-Strict retry failed: ${(retryErr as Error).message}`)
+        }
+      }
 
       console.log(
-        `[Gemini] Read RESULT: readable=${readable} gallons=${gallons} ` +
-        `confidence=${confidence}% quality=${imageQuality}`
+        `[Gemini] Read RESULT: readable=${result.readable} digits=[${(result.digits ?? []).join(",")}] ` +
+        `decimalPos=${result.decimalPosition} gallons=${result.gallons} confidence=${result.confidence}% quality=${result.imageQuality}`
       )
 
       return {
-        readable, gallons, confidence, imageQuality, notes,
-        ms: Date.now() - start, rawResponse: text,
+        readable:     result.readable,
+        gallons:      result.gallons,
+        confidence:   result.confidence,
+        imageQuality: result.imageQuality,
+        notes:        result.notes,
+        ms:           Date.now() - start,
+        rawResponse:  text,
       }
 
     } catch (err) {
-      if (err instanceof RateLimitError)    throw err
+      if (err instanceof RateLimitError)     throw err
       if (err instanceof ModelResponseError) throw err
 
       const msg = (err as Error).message

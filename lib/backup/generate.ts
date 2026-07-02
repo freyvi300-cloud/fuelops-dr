@@ -2,34 +2,40 @@
  * FuelOps-DR — Backup generation
  *
  * Exports all DB tables as JSON, packages into a ZIP, uploads to Supabase Storage.
- * Called from:
- *   - /api/admin/backup  (Vercel cron + manual via BACKUP_SECRET)
- *   - app/actions/backup.ts (UI "Crear backup ahora" button)
+ * Bucket `backups` is PRIVATE — no public URL is returned; use signed URLs via
+ * lib/backup/storage.ts to download.
+ *
+ * Paths:
+ *   manual/backup-manual-YYYY-MM-DDTHH-mm-ss.zip
+ *   automatic/backup-auto-YYYY-MM-DDTHH-mm-ss.zip
  */
 
-import JSZip   from "jszip"
+import JSZip      from "jszip"
 import { prisma } from "@/lib/prisma"
+import { supabaseUpload } from "@/lib/backup/storage"
 
-const BUCKET = "backups"
+export const BACKUP_BUCKET = "backups"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface BackupResult {
-  ok:        true
-  url:       string
-  filename:  string
-  sizeBytes: number
-  tables:    Record<string, number>
+  ok:          true
+  storagePath: string   // path inside bucket (no public URL — bucket is private)
+  filename:    string
+  sizeBytes:   number
+  tables:      Record<string, number>
 }
 
 export interface BackupError {
-  ok:      false
-  error:   string
+  ok:    false
+  error: string
 }
 
 // ─── Main function ────────────────────────────────────────────────────────────
 
-export async function generateBackup(): Promise<BackupResult | BackupError> {
+export async function generateBackup(
+  mode: "manual" | "automatic" = "manual",
+): Promise<BackupResult | BackupError> {
   try {
     // ── 1. Fetch all tables ───────────────────────────────────────────────────
     const [
@@ -47,7 +53,7 @@ export async function generateBackup(): Promise<BackupResult | BackupError> {
       prisma.truck.findMany(),
       prisma.inventoryMovement.findMany(),
       // Exclude meterPhotoB64 — raw base64 blobs are multi-MB each and already
-      // stored in Supabase Storage (whatsapp-images bucket). Include the metadata.
+      // stored in Supabase Storage (whatsapp-images bucket).
       prisma.supply.findMany({
         select: {
           id: true, customerId: true, truckId: true,
@@ -83,26 +89,27 @@ export async function generateBackup(): Promise<BackupResult | BackupError> {
     }
 
     // ── 2. Build ZIP ──────────────────────────────────────────────────────────
-    const zip  = new JSZip()
-    const now  = new Date()
-    const ts   = now.toISOString().replace(/[:.]/g, "-").slice(0, 19)  // 2026-07-02T14-30-00
+    const zip = new JSZip()
+    const now = new Date()
+    const ts  = now.toISOString().replace(/[:.]/g, "-").slice(0, 19)
 
     const manifest = {
       generatedAt: now.toISOString(),
-      version:     "1.0",
+      mode,
+      version: "2.0",
       tables,
     }
 
-    zip.file("manifest.json",             JSON.stringify(manifest,             null, 2))
-    zip.file("customers.json",            JSON.stringify(customers,            null, 2))
-    zip.file("trucks.json",               JSON.stringify(trucks,               null, 2))
-    zip.file("inventory_movements.json",  JSON.stringify(inventoryMovements,   null, 2))
-    zip.file("supplies.json",             JSON.stringify(supplies,             null, 2))
-    zip.file("invoices.json",             JSON.stringify(invoices,             null, 2))
-    zip.file("payments.json",             JSON.stringify(payments,             null, 2))
-    zip.file("system_settings.json",      JSON.stringify(systemSettings,       null, 2))
-    zip.file("whatsapp_images.json",      JSON.stringify(whatsappImages,       null, 2))
-    zip.file("whatsapp_conversations.json", JSON.stringify(whatsappConversations, null, 2))
+    zip.file("manifest.json",               JSON.stringify(manifest,               null, 2))
+    zip.file("customers.json",              JSON.stringify(customers,              null, 2))
+    zip.file("trucks.json",                 JSON.stringify(trucks,                 null, 2))
+    zip.file("inventory_movements.json",    JSON.stringify(inventoryMovements,     null, 2))
+    zip.file("supplies.json",               JSON.stringify(supplies,               null, 2))
+    zip.file("invoices.json",               JSON.stringify(invoices,               null, 2))
+    zip.file("payments.json",               JSON.stringify(payments,               null, 2))
+    zip.file("system_settings.json",        JSON.stringify(systemSettings,         null, 2))
+    zip.file("whatsapp_images.json",        JSON.stringify(whatsappImages,         null, 2))
+    zip.file("whatsapp_conversations.json", JSON.stringify(whatsappConversations,  null, 2))
 
     const zipBuffer = await zip.generateAsync({
       type:               "nodebuffer",
@@ -110,52 +117,16 @@ export async function generateBackup(): Promise<BackupResult | BackupError> {
       compressionOptions: { level: 6 },
     })
 
-    // ── 3. Upload to Supabase Storage ─────────────────────────────────────────
-    const supabaseUrl = process.env.SUPABASE_URL              ?? ""
-    const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
+    // ── 3. Upload to Supabase Storage (private bucket) ────────────────────────
+    const label      = mode === "manual" ? "manual" : "auto"
+    const filename   = `backup-${label}-${ts}.zip`
+    const storagePath = `${mode}/${filename}`
 
-    if (!supabaseUrl || !serviceKey) {
-      return {
-        ok:    false,
-        error: `Supabase no configurado. SUPABASE_URL: ${supabaseUrl ? "SET" : "MISSING"}, SUPABASE_SERVICE_ROLE_KEY: ${serviceKey ? "SET" : "MISSING"}`,
-      }
-    }
+    await supabaseUpload(BACKUP_BUCKET, storagePath, zipBuffer, "application/zip")
 
-    const y = now.getFullYear()
-    const m = String(now.getMonth() + 1).padStart(2, "0")
-    const d = String(now.getDate()).padStart(2, "0")
-    const filename  = `backup-${ts}.zip`
-    const storagePath = `${y}/${m}/${d}/${filename}`
-    const uploadUrl   = `${supabaseUrl}/storage/v1/object/${BUCKET}/${storagePath}`
-    const publicUrl   = `${supabaseUrl}/storage/v1/object/public/${BUCKET}/${storagePath}`
+    console.log(`[Backup] ✅ ${mode} backup → ${storagePath}  tables:`, tables)
 
-    console.log(`[Backup] Uploading ${zipBuffer.length}B → ${BUCKET}/${storagePath}`)
-
-    const res = await fetch(uploadUrl, {
-      method:  "POST",
-      headers: {
-        Authorization:  `Bearer ${serviceKey}`,
-        apikey:         serviceKey,
-        "Content-Type": "application/zip",
-        "x-upsert":     "true",
-      },
-      body: new Uint8Array(zipBuffer),
-    })
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "(unreadable)")
-      return { ok: false, error: `Supabase upload HTTP ${res.status}: ${body.slice(0, 300)}` }
-    }
-
-    console.log(`[Backup] ✅ Uploaded. Tables: ${JSON.stringify(tables)}`)
-
-    return {
-      ok:        true,
-      url:       publicUrl,
-      filename,
-      sizeBytes: zipBuffer.length,
-      tables,
-    }
+    return { ok: true, storagePath, filename, sizeBytes: zipBuffer.length, tables }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error("[Backup] ❌ Error:", msg)

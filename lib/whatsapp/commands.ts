@@ -205,7 +205,10 @@ async function resolveCaption(
   customerName: string,
   truckCode:    string | null,
 ): Promise<CaptionResolved | null> {
+  console.log(`[resolveCaption] called with customerName="${customerName}" truckCode="${truckCode}"`)
+
   // 1. Exact substring match (case-insensitive) — original behavior
+  console.log(`[resolveCaption] Prisma exact query: name contains "${customerName}"`)
   const exactMatches = await prisma.customer.findMany({
     where: { name: { contains: customerName, mode: "insensitive" }, status: "ACTIVE" },
     select: {
@@ -219,6 +222,8 @@ async function resolveCaption(
     },
     take: 3,
   })
+
+  console.log(`[resolveCaption] exactMatches.length=${exactMatches.length} (names: ${exactMatches.map(c=>c.name).join(", ") || "none"})`)
 
   // Unambiguous exact match — proceed immediately
   if (exactMatches.length === 1) {
@@ -237,6 +242,7 @@ async function resolveCaption(
   }
 
   // 2. No exact match or ambiguous — try fuzzy word-overlap against ALL customers
+  console.log(`[resolveCaption] exact match failed (${exactMatches.length} results). Falling back to fuzzy…`)
   const allCustomers = await prisma.customer.findMany({
     where:  { status: "ACTIVE" },
     select: {
@@ -255,8 +261,13 @@ async function resolveCaption(
     .filter(x => x.score >= 0.5)
     .sort((a, b) => b.score - a.score)
 
+  console.log(`[resolveCaption] fuzzy scored candidates: [${scored.map(x=>`"${x.c.name}"=${x.score.toFixed(2)}`).join(", ") || "none"}]`)
+
   // Need a single candidate with meaningful confidence
-  if (scored.length !== 1) return null
+  if (scored.length !== 1) {
+    console.log(`[resolveCaption] fuzzy returned null (${scored.length} candidates — need exactly 1)`)
+    return null
+  }
 
   const { c, score } = scored[0]
   const truck   = c.trucks[0] ?? null
@@ -449,22 +460,27 @@ async function handleMeterImage(
     return
   }
 
-  // Parse caption to auto-resolve customer + truck
-  const parsed   = parseCaption(msg.imageCaption)
+  // ── STEP 6b: Parse caption ────────────────────────────────────────────────
+  console.log(`[Nova/Caption] RAW caption from msg: ${JSON.stringify(msg.imageCaption)}`)
+  const parsed = parseCaption(msg.imageCaption)
+  console.log(`[Nova/Caption] parseCaption result: customer="${parsed.customerName}" truck="${parsed.truckCode}" payment="${parsed.paymentType}"`)
+
   let resolved: Awaited<ReturnType<typeof resolveCaption>> = null
 
   if (parsed.customerName) {
-    console.log(`[Nova/Image] Caption customer="${parsed.customerName}" truck="${parsed.truckCode}"`)
+    console.log(`[Nova/Caption] customerName found — calling resolveCaption("${parsed.customerName}", "${parsed.truckCode}")`)
     try {
       resolved = await resolveCaption(parsed.customerName, parsed.truckCode)
       if (resolved) {
-        console.log(`[Nova/Image] Auto-resolved → ${resolved.customerName} truck=${resolved.truckId ?? "none"}`)
+        console.log(`[Nova/Caption] resolveCaption ✅ → customerId=${resolved.customerId} name="${resolved.customerName}" truckId=${resolved.truckId ?? "null"} needsConfirm=${resolved.needsConfirm ?? false}`)
       } else {
-        console.log(`[Nova/Image] Caption unresolved — will ask interactively`)
+        console.log(`[Nova/Caption] resolveCaption returned null — customer not found or ambiguous`)
       }
     } catch (err) {
-      console.error(`[Nova/Image] Caption resolve error: ${(err as Error).message}`)
+      console.error(`[Nova/Caption] resolveCaption threw: ${(err as Error).message}`)
     }
+  } else {
+    console.log(`[Nova/Caption] No customerName extracted from caption — skipping resolveCaption`)
   }
 
   const qualityLabel: Record<string, string> = {
@@ -485,8 +501,11 @@ async function handleMeterImage(
     provider:   ocrProvider,
   }
 
+  console.log(`[Nova/Caption] resolved=${resolved ? "YES" : "NULL"} parsed.paymentType=${parsed.paymentType}`)
+
   if (resolved && resolved.needsConfirm) {
     // ── FUZZY MATCH: ask user to confirm before proceeding ────────────────
+    console.log(`[Nova/Caption] → WAITING_CAPTION_CONFIRM (fuzzy match, needs confirmation)`)
     const payload: FlowPayload = {
       ...basePayload,
       pendingCustomerId:    resolved.customerId,
@@ -506,10 +525,43 @@ async function handleMeterImage(
       `• Responde *sí* para confirmar\n` +
       `• Responde *no* para escribir el nombre correcto`
     )
-    console.log(`[Nova/Image] Fuzzy match → WAITING_CAPTION_CONFIRM for ${who}`)
+
+  } else if (resolved && parsed.paymentType) {
+    // ── FULL AUTO-RESOLVE: caption has customer + truck + payment type ─────
+    // Skip all questions and jump straight to WAITING_CONFIRM_SAVE
+    console.log(`[Nova/Caption] → WAITING_CONFIRM_SAVE (full auto: customer+truck+paymentType in caption)`)
+    const total = ocrGallons! * resolved.pricePerGallon
+    const payload: FlowPayload = {
+      ...basePayload,
+      customerId:     resolved.customerId,
+      customerName:   resolved.customerName,
+      truckId:        resolved.truckId,
+      truckName:      resolved.truckName,
+      pricePerGallon: resolved.pricePerGallon,
+      paymentType:    parsed.paymentType,
+    }
+    await startSupplyConversation(msg.from, payload, ConversationState.WAITING_CONFIRM_SAVE)
+
+    await sendTextMessage(msg.from,
+      `⛽ *Suministro listo para registrar*\n\n` +
+      `Galones:  *${ocrGallons!.toFixed(2)} gal*\n` +
+      `${confNote}\n` +
+      `Calidad:  ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+      (ocrNotes ? `_${ocrNotes}_\n` : "") +
+      `\n✅ *Todo detectado desde la descripción:*\n` +
+      `Cliente: *${resolved.customerName}*\n` +
+      (resolved.truckName ? `Camión:  *${resolved.truckName}*\n` : "") +
+      `Pago:    *${parsed.paymentType === "CASH" ? "Efectivo" : "Crédito"}*\n` +
+      `Precio:  *${fmtRD(resolved.pricePerGallon)}/gal*\n` +
+      `Total:   *${fmtRD(total)}*\n\n` +
+      `¿Confirmas guardar este suministro?\n` +
+      `• *guardar* — registrar definitivamente\n` +
+      `• *cancelar* — anular`
+    )
 
   } else if (resolved) {
-    // ── AUTO-RESOLVED: jump directly to WAITING_PAYMENT_TYPE ──────────────
+    // ── PARTIAL AUTO-RESOLVE: customer+truck found but no payment type ─────
+    console.log(`[Nova/Caption] → WAITING_PAYMENT_TYPE (customer resolved, missing payment type)`)
     const payload: FlowPayload = {
       ...basePayload,
       customerId:     resolved.customerId,
@@ -526,7 +578,7 @@ async function handleMeterImage(
       `${confNote}\n` +
       `Calidad:  ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
       (ocrNotes ? `_${ocrNotes}_\n` : "") +
-      `\n✅ *Cliente auto-detectado desde la descripción:*\n` +
+      `\n✅ *Cliente auto-detectado:*\n` +
       `Cliente: *${resolved.customerName}*\n` +
       (resolved.truckName ? `Camión:  *${resolved.truckName}*\n` : "") +
       `Precio:  *${fmtRD(resolved.pricePerGallon)}/gal*\n` +
@@ -536,7 +588,6 @@ async function handleMeterImage(
       `• *crédito* — registrar como crédito\n` +
       `• *cancelar* — anular`
     )
-    console.log(`[Nova/Image] ✅ Auto-resolved → WAITING_PAYMENT_TYPE for ${who}`)
 
   } else {
     // ── MANUAL FLOW: start from WAITING_CONFIRMATION ───────────────────────

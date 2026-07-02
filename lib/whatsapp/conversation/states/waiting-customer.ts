@@ -56,7 +56,7 @@ export const waitingCustomerHandler: StateHandler = {
       return {
         reply:
           `✅ *Cliente seleccionado: ${c.name}*\n\n` +
-          `Galones detectados: *${p.gallons.toFixed(2)} gal*\n\n` +
+          `Galones detectados: *${p.gallons!.toFixed(2)} gal*\n\n` +
           `¿Cómo se realiza el pago?\n` +
           `• *efectivo* — pago en efectivo\n` +
           `• *crédito* — registrar como crédito`,

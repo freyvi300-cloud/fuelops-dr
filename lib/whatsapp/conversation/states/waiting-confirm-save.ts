@@ -49,20 +49,20 @@ export const waitingConfirmSaveHandler: StateHandler = {
       const result = await confirmSupply({
         customerId:     p.customerId!,
         truckId:        p.truckId ?? null,
-        gallons:        p.gallons,
+        gallons:        p.gallons!,
         pricePerGallon: p.pricePerGallon!,
         paymentType:    p.paymentType!,
         notes:          `OCR WhatsApp — confianza ${p.confidence}% | ${p.ocrNotes}`.slice(0, 200),
       })
 
-      const total = p.gallons * p.pricePerGallon!
+      const total = p.gallons! * p.pricePerGallon!
 
       return {
         reply:
           `✅ *Suministro registrado exitosamente*\n\n` +
           `Factura:  *${result.invoiceNumber}*\n` +
           `Cliente:  *${result.customerName}*\n` +
-          `Galones:  *${p.gallons.toFixed(2)} gal*\n` +
+          `Galones:  *${p.gallons!.toFixed(2)} gal*\n` +
           `Precio:   *${fmtRD(p.pricePerGallon!)}/gal*\n` +
           `Total:    *${fmtRD(total)}*\n` +
           `Pago:     *${p.paymentType === "CASH" ? "Efectivo" : "Crédito"}*\n\n` +

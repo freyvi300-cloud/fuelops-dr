@@ -1,24 +1,42 @@
 /**
  * FuelOps-DR — WhatsApp Command Handler (Nova)
  *
- * Comandos conectados a lib/reporting.ts (datos reales de Supabase):
+ * Text commands:
  *   inventario     → getInventoryStatus()
  *   ventas hoy     → getSalesMetrics(getDateRange("today"))
  *   clientes deuda → getCustomerDebtReport()
  *
- * Image handling (Phase 3.1):
- *   1. Send immediate ACK ("Imagen recibida, analizándola...")
+ * Image handling pipeline (full flow):
+ *   1. ACK ("Imagen recibida, analizándola...")
  *   2. Download from Meta CDN
- *   3. Upload to Supabase Storage (bucket: whatsapp-images)
+ *   3. Upload to Supabase Storage
  *   4. Save metadata to WhatsAppImage table
- *   (Phase 3.2: run OCR and auto-register supply)
+ *   5. Classify image: meter vs payment receipt vs unknown
+ *      a. METER path:
+ *         – Run OCR (analyzeMeterImage)
+ *         – Parse caption for "Cliente: X / Camión: Y"
+ *         – Auto-resolve customer+truck when possible
+ *         – Start conversation at WAITING_PAYMENT_TYPE (if resolved) or WAITING_CONFIRMATION
+ *      b. RECEIPT path:
+ *         – Data already extracted in classify step
+ *         – Start WAITING_PAYMENT_CUSTOMER conversation
+ *      c. UNKNOWN path:
+ *         – Ask the user to send meter or receipt image
  */
 
 import { sendTextMessage, downloadMedia } from "./client"
 import { uploadToSupabase, saveWhatsAppImageRecord, buildStoragePath, updateOcrResult } from "./media"
 import { analyzeMeterImage } from "./analyzeMeterImage"
+import { classifyImage } from "./classifyImage"
+import { parseCaption } from "./parseCaption"
 import { RateLimitError, ModelResponseError } from "@/lib/ocr/meter/types"
-import { processConversation, startConversation } from "./conversation/index"
+import {
+  processConversation,
+  startSupplyConversation,
+  startPaymentConversation,
+  ConversationState,
+} from "./conversation/index"
+import type { FlowPayload } from "./conversation/types"
 import type { IncomingMessage } from "./types"
 import {
   getInventoryStatus,
@@ -28,6 +46,8 @@ import {
   getDateRange,
 } from "@/lib/reporting"
 import { getSystemSettings } from "@/lib/system-settings"
+import { prisma } from "@/lib/prisma"
+import { resolveCustomerPrice } from "@/lib/pricing"
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -41,14 +61,21 @@ const fmtGal = (n: number) =>
 const GREETING = (name: string | null) =>
   `👋 Hola${name ? `, *${name}*` : ""}! Soy *Nova*, el asistente de *FuelOps-DR*.\n\n` +
   `Escribe un comando:\n` +
-  `• *inventario*\n• *ventas hoy*\n• *clientes deuda*\n• *ayuda*`
+  `• *inventario*\n• *ventas hoy*\n• *clientes deuda*\n• *ayuda*\n\n` +
+  `También puedes enviar:\n` +
+  `📷 Foto del medidor → registrar suministro\n` +
+  `🧾 Foto de comprobante → registrar pago`
 
 const HELP =
   `📋 *Comandos disponibles:*\n\n` +
   `• *inventario* — nivel actual del tanque\n` +
   `• *ventas hoy* — resumen de ventas del día\n` +
   `• *clientes deuda* — clientes con saldo pendiente\n` +
-  `• *ayuda* — mostrar este menú`
+  `• *ayuda* — mostrar este menú\n\n` +
+  `📷 *Envía una imagen:*\n` +
+  `• Foto del medidor → registrar suministro\n` +
+  `  Incluye en la descripción: _Cliente: Nombre / Camión: H201_\n` +
+  `• Foto de comprobante de pago → registrar transferencia`
 
 const NOT_UNDERSTOOD = (text: string) =>
   `❓ No reconozco: _"${text}"_\n\nEscribe *ayuda* para ver los comandos disponibles.`
@@ -150,92 +177,109 @@ const GREETING_KEYWORDS = new Set([
   "buenos días","buenas tardes","buenas noches","buen día",
 ])
 
-// ─── Image handler (Phase 3.1) ────────────────────────────────────────────────
+// ─── Caption auto-resolver ────────────────────────────────────────────────────
 
-/**
- * Processes a received WhatsApp image:
- *   1. ACK immediately so the user sees a fast response
- *   2. Download from Meta CDN (background)
- *   3. Upload to Supabase Storage (background)
- *   4. Save metadata to DB (background)
- *
- * Phase 3.2 will add OCR here and auto-register the supply.
- */
+interface CaptionResolved {
+  customerId:     string
+  customerName:   string
+  truckId:        string | null
+  truckName:      string | null
+  pricePerGallon: number
+}
+
+async function resolveCaption(
+  customerName: string,
+  truckCode:    string | null,
+): Promise<CaptionResolved | null> {
+  const customers = await prisma.customer.findMany({
+    where: { name: { contains: customerName, mode: "insensitive" }, status: "ACTIVE" },
+    select: {
+      id: true, name: true,
+      priceType: true, fuelPricePerGallon: true, priceDiscount: true,
+      trucks: {
+        where: truckCode ? { code: truckCode, status: "ACTIVE" } : { status: "ACTIVE" },
+        select: { id: true, code: true, name: true },
+        take: 1,
+      },
+    },
+    take: 2,
+  })
+
+  // Require unambiguous customer match
+  if (customers.length !== 1) return null
+
+  const c       = customers[0]
+  const truck   = c.trucks[0] ?? null
+  const settings = await getSystemSettings()
+
+  const pricePerGallon = resolveCustomerPrice(
+    {
+      priceType:          c.priceType as "FIXED" | "DISCOUNT_PCT",
+      fuelPricePerGallon: c.fuelPricePerGallon.toNumber(),
+      priceDiscount:      c.priceDiscount.toNumber(),
+    },
+    settings.defaultFuelPrice,
+  )
+
+  return {
+    customerId:     c.id,
+    customerName:   c.name,
+    truckId:        truck?.id ?? null,
+    truckName:      truck ? `${truck.code} · ${truck.name}` : null,
+    pricePerGallon,
+  }
+}
+
+// ─── Image handler ────────────────────────────────────────────────────────────
+
 async function handleImageMessage(msg: IncomingMessage): Promise<void> {
   const who = msg.senderName ?? msg.from
-  console.log(`[Nova/Image] ${who} → IMAGE received, mediaId=${msg.imageId ?? "null"}`)
+  console.log(`[Nova/Image] ${who} → IMAGE mediaId=${msg.imageId ?? "null"} caption="${msg.imageCaption ?? "none"}"`)
 
   if (!msg.imageId) {
-    console.warn(`[Nova/Image] ${who} → image without mediaId, skipping`)
-    await sendTextMessage(msg.from,
-      `📷 Imagen recibida pero sin ID de media. Intenta enviarla de nuevo.`
-    )
+    await sendTextMessage(msg.from, `📷 Imagen recibida pero sin ID de media. Intenta enviarla de nuevo.`)
     return
   }
 
-  // 1. Immediate ACK to user
-  await sendTextMessage(msg.from,
-    `📷 *Imagen recibida correctamente.*\nEstoy analizándola...`
-  )
+  await sendTextMessage(msg.from, `📷 *Imagen recibida correctamente.*\nEstoy analizándola...`)
   console.log(`[Nova/Image] ${who} → ACK sent`)
 
-  // 2. BLOCKING for diagnosis — webhook waits for full processing before returning 200
-  // TODO: revert to fire-and-forget once the flow is confirmed working:
-  //   processImageAsync(msg).catch(err => console.error(...))
-  console.log(`[Nova/Image] ${who} → starting BLOCKING processImageAsync`)
   try {
     await processImageAsync(msg)
-    console.log(`[Nova/Image] ${who} → BLOCKING processImageAsync DONE`)
   } catch (err) {
-    const e = err as Error
-    console.error(`[Nova/Image] ${who} → BLOCKING processImageAsync THREW:`, e.message)
-    console.error(`[Nova/Image] stack:`, e.stack)
+    console.error(`[Nova/Image] processImageAsync threw:`, (err as Error).message)
   }
 }
 
 async function processImageAsync(msg: IncomingMessage): Promise<void> {
   const who = msg.senderName ?? msg.from
-  console.log(`[Nova/Image] ═══ processImageAsync START — from=${msg.from} mediaId=${msg.imageId} ═══`)
+  console.log(`[Nova/Image] ═══ processImageAsync START — from=${msg.from} ═══`)
 
-  // ── Step 1: Download from Meta ─────────────────────────────────────────────
-  console.log(`[Nova/Image] ── STEP 1: Download from Meta CDN ──`)
+  // ── Step 1: Download ───────────────────────────────────────────────────────
   let buffer: Buffer, mimeType: string, filename: string
-
   try {
     const dl = await downloadMedia(msg.imageId!)
     buffer   = dl.buffer
     mimeType = dl.mimeType
     filename = dl.filename
-    console.log(`[Nova/Image] ── STEP 1 ✅ ${mimeType} ${buffer.length}B "${filename}"`)
+    console.log(`[Nova/Image] STEP 1 ✅ ${mimeType} ${buffer.length}B`)
   } catch (err) {
-    const e = err as Error
-    console.error(`[Nova/Image] ── STEP 1 ❌ Download FAILED`)
-    console.error(`[Nova/Image]    message : ${e.message}`)
-    console.error(`[Nova/Image]    cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
-    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
-    return   // stop here — upload and DB steps skipped
+    console.error(`[Nova/Image] STEP 1 ❌ Download failed: ${(err as Error).message}`)
+    return
   }
 
-  // ── Step 2: Upload to Supabase Storage ─────────────────────────────────────
+  // ── Step 2: Upload to Supabase ─────────────────────────────────────────────
   const storagePath = buildStoragePath(msg.from, filename)
-  console.log(`[Nova/Image] ── STEP 2: Upload to Supabase Storage → "${storagePath}"`)
   let storageUrl: string
-
   try {
     storageUrl = await uploadToSupabase(buffer, mimeType, storagePath)
-    console.log(`[Nova/Image] ── STEP 2 ✅ ${storageUrl}`)
+    console.log(`[Nova/Image] STEP 2 ✅ ${storageUrl}`)
   } catch (err) {
-    const e = err as Error
-    console.error(`[Nova/Image] ── STEP 2 ❌ Supabase upload FAILED`)
-    console.error(`[Nova/Image]    message : ${e.message}`)
-    console.error(`[Nova/Image]    cause   : ${String((e as NodeJS.ErrnoException).cause ?? "none")}`)
-    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
+    console.error(`[Nova/Image] STEP 2 ❌ Upload failed: ${(err as Error).message}`)
     return
   }
 
   // ── Step 3: Save metadata to DB ────────────────────────────────────────────
-  console.log(`[Nova/Image] ── STEP 3: Save to DB — mediaId=${msg.imageId}`)
-
   try {
     await saveWhatsAppImageRecord({
       mediaId:     msg.imageId!,
@@ -243,144 +287,245 @@ async function processImageAsync(msg: IncomingMessage): Promise<void> {
       senderName:  msg.senderName,
       storageUrl,
       mimeType,
-      caption:     null,
+      caption:     msg.imageCaption,
     })
-    console.log(`[Nova/Image] ── STEP 3 ✅ DB record saved`)
+    console.log(`[Nova/Image] STEP 3 ✅ DB record saved`)
   } catch (err) {
-    const e = err as Error
-    console.error(`[Nova/Image] ── STEP 3 ❌ DB save FAILED`)
-    console.error(`[Nova/Image]    message : ${e.message}`)
-    console.error(`[Nova/Image]    stack   : ${e.stack ?? "no stack"}`)
-    // Non-fatal: image is in storage, DB can be retried
+    console.error(`[Nova/Image] STEP 3 ❌ DB save failed: ${(err as Error).message}`)
   }
 
-  // ── Step 4: Analyze with Gemini Vision ─────────────────────────────────────
-  console.log(`[Nova/Image] ── STEP 4: Gemini OCR ──`)
+  // ── Step 4: Classify image ─────────────────────────────────────────────────
+  console.log(`[Nova/Image] STEP 4: Classify image`)
+  let classification: Awaited<ReturnType<typeof classifyImage>>
+  try {
+    classification = await classifyImage(buffer)
+    console.log(`[Nova/Image] STEP 4 ✅ type=${classification.type}`)
+  } catch (err) {
+    console.error(`[Nova/Image] STEP 4 ❌ Classify failed: ${(err as Error).message}`)
+    // Fall back to meter assumption
+    classification = { type: "meter", receipt: null }
+  }
 
+  // ── RECEIPT path ───────────────────────────────────────────────────────────
+  if (classification.type === "receipt") {
+    await handleReceiptImage(msg, storageUrl, classification.receipt)
+    return
+  }
+
+  // ── UNKNOWN path ───────────────────────────────────────────────────────────
+  if (classification.type === "unknown") {
+    await sendTextMessage(msg.from,
+      `❓ No reconocí esta imagen como medidor ni comprobante de pago.\n\n` +
+      `Por favor envía:\n` +
+      `• 📷 Foto del *medidor* para registrar un suministro\n` +
+      `• 🧾 Foto del *comprobante de transferencia* para registrar un pago`
+    )
+    return
+  }
+
+  // ── METER path ─────────────────────────────────────────────────────────────
+  await handleMeterImage(msg, buffer, storageUrl)
+}
+
+// ── Meter flow ─────────────────────────────────────────────────────────────────
+
+async function handleMeterImage(
+  msg:        IncomingMessage,
+  buffer:     Buffer,
+  storageUrl: string,
+): Promise<void> {
+  const who = msg.senderName ?? msg.from
+
+  // Step 5: OCR
+  console.log(`[Nova/Image] STEP 5: OCR`)
   let ocrGallons:    number | null = null
-  let ocrConfidence: number        = 0
-  let ocrQuality:    string        = "mala"
-  let ocrNotes:      string        = ""
-  let ocrProvider:   string        = "gemini/gemini-2.5-flash"
-  let ocrRawText:    string        = ""
+  let ocrConfidence  = 0
+  let ocrQuality     = "mala"
+  let ocrNotes       = ""
+  let ocrProvider    = "gemini/gemini-2.5-flash"
+  let ocrRawText     = ""
 
   try {
-    const ocr   = await analyzeMeterImage(buffer)
+    const ocr  = await analyzeMeterImage(buffer)
     ocrGallons    = ocr.gallons
     ocrConfidence = ocr.confidence
     ocrQuality    = ocr.imageQuality
     ocrNotes      = ocr.notes
     ocrProvider   = ocr.provider
     ocrRawText    = ocr.rawText
-    console.log(`[Nova/Image] ── STEP 4 ✅ gallons=${ocrGallons} confidence=${ocrConfidence}% quality=${ocrQuality}`)
+    console.log(`[Nova/Image] STEP 5 ✅ gallons=${ocrGallons} conf=${ocrConfidence}%`)
   } catch (err) {
     if (err instanceof RateLimitError) {
-      console.error(`[Nova/Image] ── STEP 4 ❌ RATE LIMIT: ${(err as Error).message}`)
-      await sendTextMessage(
-        msg.from,
-        "⚠️ El sistema está ocupado procesando imágenes.\nPor favor intenta nuevamente en unos segundos."
-      )
-      console.log(`[Nova/Image] ── Rate limit reply sent — stopping pipeline`)
+      await sendTextMessage(msg.from, "⚠️ El sistema está ocupado. Intenta nuevamente en unos segundos.")
       return
     }
     if (err instanceof ModelResponseError) {
-      console.error(`[Nova/Image] ── STEP 4 ❌ MODEL RESPONSE ERROR: ${(err as Error).message}`)
-      await sendTextMessage(
-        msg.from,
-        "⚠️ Ocurrió un error interno procesando la respuesta del modelo.\nPor favor intenta nuevamente."
-      )
-      console.log(`[Nova/Image] ── Model response error reply sent — stopping pipeline`)
+      await sendTextMessage(msg.from, "⚠️ Error interno procesando la imagen. Intenta nuevamente.")
       return
     }
-    const e = err as Error
-    console.error(`[Nova/Image] ── STEP 4 ❌ Gemini OCR FAILED: ${e.message}`)
-    // Don't stop — we still save what we have and reply to the user
+    console.error(`[Nova/Image] STEP 5 ❌ OCR failed: ${(err as Error).message}`)
   }
 
-  // ── Step 5: Save OCR result to DB ──────────────────────────────────────────
-  console.log(`[Nova/Image] ── STEP 5: Save OCR result to DB ──`)
-
+  // Save OCR result
   try {
     await updateOcrResult(msg.imageId!, {
       ocrGallons, ocrConfidence, ocrQuality, ocrNotes, ocrProvider, ocrRawText,
     })
-    console.log(`[Nova/Image] ── STEP 5 ✅`)
   } catch (err) {
-    console.error(`[Nova/Image] ── STEP 5 ❌ DB OCR save failed: ${(err as Error).message}`)
-    // Non-fatal
+    console.error(`[Nova/Image] OCR DB save failed: ${(err as Error).message}`)
   }
 
-  // ── Step 6: Reply to user with OCR result ───────────────────────────────────
-  // Three-tier confidence model:
-  //   HIGH  (≥ ocrMinConfidence, default 90%) → confirmed reading, offer to register
-  //   MED   (≥ 70%, < ocrMinConfidence)       → "approximately X gal, please confirm"
-  //   LOW   (< 70% OR gallons === null)        → ask for better photo
-  console.log(`[Nova/Image] ── STEP 6: Send OCR reply ──`)
+  // Step 6: Reply
+  const settings     = await getSystemSettings()
+  const highThreshold = settings.ocrMinConfidence
+  const medThreshold  = 70
 
-  try {
-    const settings  = await getSystemSettings()
-    const highThreshold = settings.ocrMinConfidence  // e.g. 90
-    const medThreshold  = 70                         // fixed floor for "approximate" tier
+  const hasGallons = ocrGallons !== null
+  const isHigh     = hasGallons && ocrConfidence >= highThreshold
+  const isMed      = hasGallons && !isHigh && ocrConfidence >= medThreshold
+  const isReadable = isHigh || isMed
 
-    const qualityLabel: Record<string, string> = {
-      buena: "buena 👍", regular: "regular ⚠️", mala: "mala ❌",
-    }
-
-    const hasGallons  = ocrGallons !== null
-    const isHigh      = hasGallons && ocrConfidence >= highThreshold
-    const isMed       = hasGallons && !isHigh && ocrConfidence >= medThreshold
-    const isReadable  = isHigh || isMed
-
-    if (isReadable) {
-      // ── Start conversation flow ────────────────────────────────────────────
-      // Save state to DB so the user's next reply is intercepted by the machine
-      await startConversation(msg.from, {
-        mediaId:    msg.imageId!,
-        imageUrl:   storageUrl,
-        gallons:    ocrGallons!,
-        confidence: ocrConfidence,
-        quality:    ocrQuality,
-        ocrNotes:   ocrNotes,
-        provider:   ocrProvider,
-      })
-
-      const confidenceNote = isHigh
-        ? `Confianza: ${ocrConfidence}%`
-        : `Confianza: ${ocrConfidence}% _(aproximada — confirma si es correcta)_`
-
-      await sendTextMessage(msg.from,
-        `⛽ *Lectura del medidor*\n\n` +
-        `Galones detectados: *${ocrGallons!.toFixed(2)} gal*\n` +
-        `${confidenceNote}\n` +
-        `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
-        (ocrNotes ? `_${ocrNotes}_\n` : "") +
-        `\n¿Deseas registrar este suministro?\n` +
-        `Responde *registrar* para confirmar o *cancelar* para anular.`
-      )
-      console.log(`[Nova/Image] ── STEP 6 ✅ readable reply — conversation started (${ocrConfidence}%)`)
-
-    } else {
-      // Cannot read — ask for better photo (no conversation state created)
-      const reason = !hasGallons
-        ? "No pude identificar un display de medidor en la foto."
-        : `Confianza muy baja (${ocrConfidence}%) — imagen demasiado degradada.`
-
-      await sendTextMessage(msg.from,
-        `⚠️ *No pude leer el medidor*\n\n` +
-        `${reason}\n\n` +
-        `Para mejores resultados:\n` +
-        `• Acerca más la cámara al display\n` +
-        `• Asegura buena iluminación\n` +
-        `• Evita reflejos y ángulos extremos\n` +
-        `• Enfoca directamente sobre los números`
-      )
-      console.log(`[Nova/Image] ── STEP 6 ✅ LOW confidence reply (${ocrConfidence}%)`)
-    }
-  } catch (err) {
-    console.error(`[Nova/Image] ── STEP 6 ❌ Reply failed: ${(err as Error).message}`)
+  if (!isReadable) {
+    const reason = !hasGallons
+      ? "No pude identificar un display de medidor en la foto."
+      : `Confianza muy baja (${ocrConfidence}%) — imagen demasiado degradada.`
+    await sendTextMessage(msg.from,
+      `⚠️ *No pude leer el medidor*\n\n${reason}\n\n` +
+      `Para mejores resultados:\n` +
+      `• Acerca más la cámara al display\n` +
+      `• Asegura buena iluminación\n` +
+      `• Evita reflejos y ángulos extremos`
+    )
+    return
   }
 
-  console.log(`[Nova/Image] ═══ processImageAsync COMPLETE ═══`)
+  // Parse caption to auto-resolve customer + truck
+  const parsed   = parseCaption(msg.imageCaption)
+  let resolved: Awaited<ReturnType<typeof resolveCaption>> = null
+
+  if (parsed.customerName) {
+    console.log(`[Nova/Image] Caption customer="${parsed.customerName}" truck="${parsed.truckCode}"`)
+    try {
+      resolved = await resolveCaption(parsed.customerName, parsed.truckCode)
+      if (resolved) {
+        console.log(`[Nova/Image] Auto-resolved → ${resolved.customerName} truck=${resolved.truckId ?? "none"}`)
+      } else {
+        console.log(`[Nova/Image] Caption unresolved — will ask interactively`)
+      }
+    } catch (err) {
+      console.error(`[Nova/Image] Caption resolve error: ${(err as Error).message}`)
+    }
+  }
+
+  const qualityLabel: Record<string, string> = {
+    buena: "buena 👍", regular: "regular ⚠️", mala: "mala ❌",
+  }
+  const confNote = isHigh
+    ? `Confianza: ${ocrConfidence}%`
+    : `Confianza: ${ocrConfidence}% _(aproximada — confirma si es correcta)_`
+
+  const basePayload: FlowPayload = {
+    flowType:   "SUPPLY",
+    mediaId:    msg.imageId!,
+    imageUrl:   storageUrl,
+    gallons:    ocrGallons!,
+    confidence: ocrConfidence,
+    quality:    ocrQuality,
+    ocrNotes,
+    provider:   ocrProvider,
+  }
+
+  if (resolved) {
+    // ── AUTO-RESOLVED: jump directly to WAITING_PAYMENT_TYPE ──────────────
+    const payload: FlowPayload = {
+      ...basePayload,
+      customerId:     resolved.customerId,
+      customerName:   resolved.customerName,
+      truckId:        resolved.truckId,
+      truckName:      resolved.truckName,
+      pricePerGallon: resolved.pricePerGallon,
+    }
+    await startSupplyConversation(msg.from, payload, ConversationState.WAITING_PAYMENT_TYPE)
+
+    await sendTextMessage(msg.from,
+      `⛽ *Lectura del medidor detectada*\n\n` +
+      `Galones:  *${ocrGallons!.toFixed(2)} gal*\n` +
+      `${confNote}\n` +
+      `Calidad:  ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+      (ocrNotes ? `_${ocrNotes}_\n` : "") +
+      `\n✅ *Cliente auto-detectado desde la descripción:*\n` +
+      `Cliente: *${resolved.customerName}*\n` +
+      (resolved.truckName ? `Camión:  *${resolved.truckName}*\n` : "") +
+      `Precio:  *${fmtRD(resolved.pricePerGallon)}/gal*\n` +
+      `Total:   *${fmtRD(ocrGallons! * resolved.pricePerGallon)}*\n\n` +
+      `¿Cómo se realiza el pago?\n` +
+      `• *efectivo* — pago en efectivo\n` +
+      `• *crédito* — registrar como crédito\n` +
+      `• *cancelar* — anular`
+    )
+    console.log(`[Nova/Image] ✅ Auto-resolved → WAITING_PAYMENT_TYPE for ${who}`)
+
+  } else {
+    // ── MANUAL FLOW: start from WAITING_CONFIRMATION ───────────────────────
+    await startSupplyConversation(msg.from, basePayload)
+
+    await sendTextMessage(msg.from,
+      `⛽ *Lectura del medidor*\n\n` +
+      `Galones detectados: *${ocrGallons!.toFixed(2)} gal*\n` +
+      `${confNote}\n` +
+      `Calidad: ${qualityLabel[ocrQuality] ?? ocrQuality}\n` +
+      (ocrNotes ? `_${ocrNotes}_\n` : "") +
+      `\n¿Deseas registrar este suministro?\n` +
+      `Responde *registrar* para confirmar o *cancelar* para anular.\n\n` +
+      `_Tip: incluye en la descripción de la foto:\n` +
+      `Cliente: Nombre / Camión: H201_`
+    )
+    console.log(`[Nova/Image] ✅ Manual flow → WAITING_CONFIRMATION for ${who}`)
+  }
+}
+
+// ── Receipt / payment flow ─────────────────────────────────────────────────────
+
+async function handleReceiptImage(
+  msg:        IncomingMessage,
+  storageUrl: string,
+  receipt:    Awaited<ReturnType<typeof classifyImage>>["receipt"],
+): Promise<void> {
+  const who = msg.senderName ?? msg.from
+  console.log(`[Nova/Image] RECEIPT path — amount=${receipt?.amount} bank=${receipt?.bank}`)
+
+  if (!receipt || receipt.amount === null) {
+    await sendTextMessage(msg.from,
+      `🧾 *Comprobante recibido*, pero no pude leer el monto claramente.\n\n` +
+      `Por favor envía una foto más nítida del comprobante o registra el pago manualmente en la app.`
+    )
+    return
+  }
+
+  const payload: FlowPayload = {
+    flowType:          "PAYMENT",
+    mediaId:           msg.imageId!,
+    imageUrl:          storageUrl,
+    paymentAmount:     receipt.amount,
+    paymentBank:       receipt.bank,
+    paymentReference:  receipt.reference,
+    paymentDate:       receipt.date,
+    paymentEmitter:    receipt.emitter,
+  }
+
+  await startPaymentConversation(msg.from, payload)
+
+  await sendTextMessage(msg.from,
+    `🧾 *Comprobante de pago detectado*\n\n` +
+    `Monto:      *${receipt.currency ?? "RD$"}${receipt.amount.toLocaleString("es-DO", { minimumFractionDigits: 2 })}*\n` +
+    (receipt.bank      ? `Banco:      *${receipt.bank}*\n`      : "") +
+    (receipt.reference ? `Referencia: *${receipt.reference}*\n` : "") +
+    (receipt.date      ? `Fecha:      *${receipt.date}*\n`      : "") +
+    (receipt.emitter   ? `Emisor:     *${receipt.emitter}*\n`   : "") +
+    `\n¿A qué cliente corresponde este pago?\n` +
+    `Escribe el nombre del cliente, o *cancelar* para anular.`
+  )
+  console.log(`[Nova/Image] ✅ Receipt → WAITING_PAYMENT_CUSTOMER for ${who}`)
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -402,8 +547,6 @@ export async function handleIncomingMessage(msg: IncomingMessage): Promise<void>
   }
 
   // ── Active conversation — intercept BEFORE command parsing ─────────────────
-  // If this user has a pending conversation state (e.g. WAITING_CONFIRMATION),
-  // route the message through the state machine instead of the command registry.
   try {
     const conversationReply = await processConversation(msg.from, msg.text)
     if (conversationReply !== null) {
@@ -413,7 +556,6 @@ export async function handleIncomingMessage(msg: IncomingMessage): Promise<void>
     }
   } catch (err) {
     console.error(`[Nova] ${who} → conversation processing error:`, (err as Error).message)
-    // Fall through to normal command handling rather than silently failing
   }
 
   const normalised = msg.text.toLowerCase().trim()

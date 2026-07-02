@@ -44,14 +44,16 @@ function normalise(
   nameMap:     Record<string, string>,
   phoneNumberId: string,
 ): IncomingMessage {
-  const text    = raw.type === "text"  ? (raw as { text: { body: string } }).text?.body  ?? null : null
-  const imageId = raw.type === "image" ? (raw as { image: { id: string } }).image?.id    ?? null : null
+  const text         = raw.type === "text"  ? (raw as { text: { body: string } }).text?.body              ?? null : null
+  const imageId      = raw.type === "image" ? (raw as { image: { id: string; caption?: string } }).image?.id      ?? null : null
+  const imageCaption = raw.type === "image" ? (raw as { image: { id: string; caption?: string } }).image?.caption ?? null : null
 
   return {
     from:          raw.from,
     messageId:     raw.id,
     text,
     imageId,
+    imageCaption,
     type:          raw.type,
     timestamp:     new Date(parseInt(raw.timestamp, 10) * 1000),
     senderName:    nameMap[raw.from] ?? null,

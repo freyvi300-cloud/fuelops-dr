@@ -12,6 +12,7 @@
 // ─── State enum ───────────────────────────────────────────────────────────────
 
 export const ConversationState = {
+  // ── Supply flow ───────────────────────────────────────────────────────────
   // OCR reading received, waiting for user confirmation or cancellation
   WAITING_CONFIRMATION: "WAITING_CONFIRMATION",
   // User confirmed reading, waiting for customer name
@@ -21,37 +22,50 @@ export const ConversationState = {
   // All data collected, showing final summary and waiting for save confirmation
   WAITING_CONFIRM_SAVE: "WAITING_CONFIRM_SAVE",
 
-  // ── Future states (scaffold only — implement when needed) ──────────────────
-  WAITING_TRUCK:   "WAITING_TRUCK",
-  WAITING_DRIVER:  "WAITING_DRIVER",
-  WAITING_PRICE:   "WAITING_PRICE",
+  // ── Payment / reconciliation flow ─────────────────────────────────────────
+  // Receipt OCR extracted payment data, waiting for customer name
+  WAITING_PAYMENT_CUSTOMER: "WAITING_PAYMENT_CUSTOMER",
+  // Customer confirmed, waiting for CONFIRMAR / CANCELAR
+  WAITING_PAYMENT_CONFIRM:  "WAITING_PAYMENT_CONFIRM",
 } as const
 
 export type ConversationState = typeof ConversationState[keyof typeof ConversationState]
 
-// ─── Payload ──────────────────────────────────────────────────────────────────
-// Single payload type carried through the entire supply registration flow.
-// Fields are populated progressively as the conversation advances.
+// ─── Unified flow payload ─────────────────────────────────────────────────────
+// A single JSON blob stored in WhatsAppConversation.payload.
+// Fields are populated progressively as the flow advances.
 
-export interface SupplyFlowPayload {
-  // ── From OCR ──────────────────────────────────────────────────────────────
-  mediaId:    string
-  imageUrl:   string
-  gallons:    number
-  confidence: number
-  quality:    string     // "buena" | "regular" | "mala"
-  ocrNotes:   string
-  provider:   string
+export interface FlowPayload {
+  // Discriminator — determines which flow is active
+  flowType: "SUPPLY" | "PAYMENT"
 
-  // ── Collected during conversation ─────────────────────────────────────────
+  // ── Supply flow: from OCR ────────────────────────────────────────────────
+  mediaId?:    string
+  imageUrl?:   string
+  gallons?:    number
+  confidence?: number
+  quality?:    string        // "buena" | "regular" | "mala"
+  ocrNotes?:   string
+  provider?:   string
+
+  // ── Supply flow: collected during conversation ────────────────────────────
   customerId?:     string
   customerName?:   string
   truckId?:        string | null
   truckName?:      string | null
-  driverId?:       string | null
   paymentType?:    "CASH" | "CREDIT"
-  pricePerGallon?: number          // override — if not set, use customer's effective price
+  pricePerGallon?: number
+
+  // ── Payment flow: from receipt OCR ───────────────────────────────────────
+  paymentAmount?:    number
+  paymentBank?:      string | null
+  paymentReference?: string | null
+  paymentDate?:      string | null   // ISO string extracted from receipt
+  paymentEmitter?:   string | null   // name of sender from receipt
 }
+
+// Backward-compat alias (existing state handlers use SupplyFlowPayload)
+export type SupplyFlowPayload = FlowPayload
 
 // ─── Conversation record (as returned from DB) ────────────────────────────────
 
@@ -59,7 +73,7 @@ export interface StoredConversation {
   id:          string
   phoneNumber: string
   state:       ConversationState
-  payload:     SupplyFlowPayload
+  payload:     FlowPayload
   expiresAt:   Date
 }
 
@@ -81,7 +95,7 @@ export interface StateResult {
   /** Transition to this state. If undefined and endConversation=false, stay in current state. */
   nextState?: ConversationState
   /** Fields to merge into the current payload for the next state */
-  nextPayload?: Partial<SupplyFlowPayload>
+  nextPayload?: Partial<FlowPayload>
   /** If true, the conversation record is deleted after sending the reply */
   endConversation: boolean
 }

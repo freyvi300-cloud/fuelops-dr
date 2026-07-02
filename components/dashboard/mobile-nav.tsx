@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 import Link from "next/link"
 import {
   Menu, X, LayoutDashboard, Fuel, Users, Truck, Droplets,
-  Receipt, CircleDollarSign, BarChart3, UserCog, Settings,
+  Receipt, CircleDollarSign, BarChart3, UserCog, Settings, MessageCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ThemeToggle from "@/components/theme/theme-toggle"
@@ -21,6 +21,7 @@ const navItems = [
   { href: "/facturas",      label: "Facturas",             icon: Receipt,         primary: false },
   { href: "/cobros",        label: "Cobros",               icon: CircleDollarSign,primary: false },
   { href: "/reportes",      label: "Reportes",             icon: BarChart3,       primary: false },
+  { href: "/whatsapp",      label: "WhatsApp",             icon: MessageCircle,   primary: false },
   { href: "/empleados",     label: "Empleados",            icon: UserCog,         primary: false },
   { href: "/configuracion", label: "Configuración",        icon: Settings,        primary: false },
 ]

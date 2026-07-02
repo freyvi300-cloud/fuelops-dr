@@ -32,7 +32,7 @@ export const waitingConfirmationHandler: StateHandler = {
     if (CONFIRM_WORDS.has(message)) {
       return {
         reply:
-          `✅ *Lectura confirmada: ${p.gallons.toFixed(2)} gal*\n\n` +
+          `✅ *Lectura confirmada: ${p.gallons!.toFixed(2)} gal*\n\n` +
           `¿Para qué cliente es este suministro?\n` +
           `Escribe el nombre del cliente.`,
         nextState:       ConversationState.WAITING_CUSTOMER,
@@ -52,7 +52,7 @@ export const waitingConfirmationHandler: StateHandler = {
     return {
       reply:
         `Responde:\n` +
-        `• *registrar* — confirmar suministro de *${p.gallons.toFixed(2)} gal*\n` +
+        `• *registrar* — confirmar suministro de *${p.gallons!.toFixed(2)} gal*\n` +
         `• *cancelar* — anular y descartar`,
       endConversation: false,
     }

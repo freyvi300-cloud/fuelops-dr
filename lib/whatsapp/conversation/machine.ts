@@ -11,19 +11,23 @@
  */
 
 import type { ConversationState, StateHandler, ConversationContext, StateResult } from "./types"
-import { waitingConfirmationHandler } from "./states/waiting-confirmation"
-import { waitingCustomerHandler }     from "./states/waiting-customer"
-import { waitingPaymentTypeHandler }  from "./states/waiting-payment-type"
-import { waitingConfirmSaveHandler }  from "./states/waiting-confirm-save"
+import { waitingConfirmationHandler }    from "./states/waiting-confirmation"
+import { waitingCustomerHandler }        from "./states/waiting-customer"
+import { waitingPaymentTypeHandler }     from "./states/waiting-payment-type"
+import { waitingConfirmSaveHandler }     from "./states/waiting-confirm-save"
+import { waitingPaymentCustomerHandler } from "./states/waiting-payment-customer"
+import { waitingPaymentConfirmHandler }  from "./states/waiting-payment-confirm"
 
 // ─── Handler registry ─────────────────────────────────────────────────────────
 // Key = ConversationState value, value = handler for that state.
 
 const HANDLERS = new Map<ConversationState, StateHandler>([
-  [waitingConfirmationHandler.state, waitingConfirmationHandler],
-  [waitingCustomerHandler.state,     waitingCustomerHandler],
-  [waitingPaymentTypeHandler.state,  waitingPaymentTypeHandler],
-  [waitingConfirmSaveHandler.state,  waitingConfirmSaveHandler],
+  [waitingConfirmationHandler.state,    waitingConfirmationHandler],
+  [waitingCustomerHandler.state,        waitingCustomerHandler],
+  [waitingPaymentTypeHandler.state,     waitingPaymentTypeHandler],
+  [waitingConfirmSaveHandler.state,     waitingConfirmSaveHandler],
+  [waitingPaymentCustomerHandler.state, waitingPaymentCustomerHandler],
+  [waitingPaymentConfirmHandler.state,  waitingPaymentConfirmHandler],
 ])
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────

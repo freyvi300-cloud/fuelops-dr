@@ -72,13 +72,13 @@ export const waitingPaymentTypeHandler: StateHandler = {
         )
       : settings.defaultFuelPrice
 
-    const total = p.gallons * effectivePrice
+    const total = p.gallons! * effectivePrice
 
     return {
       reply:
         `📋 *Resumen del suministro*\n\n` +
         `Cliente:  *${p.customerName}*\n` +
-        `Galones:  *${p.gallons.toFixed(2)} gal*\n` +
+        `Galones:  *${p.gallons!.toFixed(2)} gal*\n` +
         `Precio:   *${fmtRD(effectivePrice)}/gal*\n` +
         `Total:    *${fmtRD(total)}*\n` +
         `Pago:     *${paymentType === "CASH" ? "Efectivo" : "Crédito"}*\n\n` +

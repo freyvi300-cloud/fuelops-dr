@@ -8,17 +8,21 @@
  *   - Returns the reply text to send to the user
  *   - Returns null if no active conversation exists (caller handles as normal command)
  *
- * startConversation(phoneNumber, payload):
+ * startSupplyConversation(phoneNumber, payload, initialState?):
  *   - Called by the image handler after a successful OCR reading
- *   - Creates a WAITING_CONFIRMATION conversation
+ *   - Creates a WAITING_CONFIRMATION (or WAITING_PAYMENT_TYPE) conversation
+ *
+ * startPaymentConversation(phoneNumber, payload):
+ *   - Called when a payment receipt is detected
+ *   - Creates a WAITING_PAYMENT_CUSTOMER conversation
  */
 
 export { getConversation, clearConversation } from "./store"
-export type { SupplyFlowPayload, StoredConversation } from "./types"
+export type { FlowPayload, SupplyFlowPayload, StoredConversation } from "./types"
 export { ConversationState } from "./types"
 
 import { getConversation, setConversation, clearConversation } from "./store"
-import { ConversationState, type SupplyFlowPayload } from "./types"
+import { ConversationState, type FlowPayload } from "./types"
 import { dispatch } from "./machine"
 
 export async function processConversation(
@@ -37,7 +41,7 @@ export async function processConversation(
     await clearConversation(phoneNumber)
   } else if (result.nextState) {
     // Merge nextPayload into current payload and transition
-    const nextPayload: SupplyFlowPayload = {
+    const nextPayload: FlowPayload = {
       ...conversation.payload,
       ...result.nextPayload,
     }
@@ -48,10 +52,22 @@ export async function processConversation(
   return result.reply
 }
 
-export async function startConversation(
-  phoneNumber: string,
-  payload:     SupplyFlowPayload,
+export async function startSupplyConversation(
+  phoneNumber:  string,
+  payload:      FlowPayload,
+  initialState: ConversationState = ConversationState.WAITING_CONFIRMATION,
 ): Promise<void> {
-  await setConversation(phoneNumber, ConversationState.WAITING_CONFIRMATION, payload)
-  console.log(`[Conversation] Started WAITING_CONFIRMATION for ${phoneNumber}`)
+  await setConversation(phoneNumber, initialState, payload)
+  console.log(`[Conversation] Started ${initialState} for ${phoneNumber}`)
+}
+
+/** @deprecated Use startSupplyConversation */
+export const startConversation = startSupplyConversation
+
+export async function startPaymentConversation(
+  phoneNumber: string,
+  payload:     FlowPayload,
+): Promise<void> {
+  await setConversation(phoneNumber, ConversationState.WAITING_PAYMENT_CUSTOMER, payload)
+  console.log(`[Conversation] Started WAITING_PAYMENT_CUSTOMER for ${phoneNumber}`)
 }

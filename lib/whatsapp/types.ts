@@ -88,14 +88,15 @@ export interface WhatsAppWebhookPayload {
 
 /** Clean representation after parsing the raw webhook payload */
 export interface IncomingMessage {
-  from:        string       // sender phone (without +)
-  messageId:   string
-  text:        string | null  // null for non-text types
-  imageId:     string | null  // media ID if type === "image" (for future OCR)
-  type:        string
-  timestamp:   Date
-  senderName:  string | null
-  phoneNumberId: string     // which of our numbers received the message
+  from:         string       // sender phone (without +)
+  messageId:    string
+  text:         string | null  // null for non-text types
+  imageId:      string | null  // media ID if type === "image"
+  imageCaption: string | null  // optional caption attached to an image message
+  type:         string
+  timestamp:    Date
+  senderName:   string | null
+  phoneNumberId: string      // which of our numbers received the message
 }
 
 // ─── Send API ─────────────────────────────────────────────────────────────────

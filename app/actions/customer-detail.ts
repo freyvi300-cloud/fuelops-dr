@@ -107,9 +107,10 @@ export interface CustomerDetailData {
   lastPayment:         CustomerPaymentItem | null
   paymentCount:        number
   // Consumption stats
+  supplyCount:          number
   totalGallonsAllTime:  number
-  avgDailyGallons:      number    // last 30 days
-  avgMonthlyGallons:    number    // last 90 days / 3
+  avgDailyGallons:      number    // gal per day-with-supply in last 30d
+  avgMonthlyGallons:    number    // extrapolated 30d rate from 90d window
   lastPurchaseDate:     string | null
   firstPurchaseDate:    string | null
   // Timeline
@@ -250,8 +251,10 @@ export async function getCustomerDetailData(
   const totalGallons = supplies.reduce((s, sup) => s + sup.gallons, 0)
 
   const trucks: CustomerTruckItem[] = raw.trucks.map(t => {
+    // Match by FK first; fall back to matching by truck code (handles supplies
+    // created before the truck was formally linked, or after a truck was replaced)
     const truckGallons = supplies
-      .filter(s => s.truckId === t.id)
+      .filter(s => s.truckId === t.id || (s.truckCode != null && s.truckCode === t.code))
       .reduce((s, sup) => s + sup.gallons, 0)
     return {
       id:            t.id,
@@ -267,22 +270,32 @@ export async function getCustomerDetailData(
   })
 
   // ── Consumption stats ─────────────────────────────────────────────────────
-  const nowStats     = new Date()
-  const thirtyAgo    = new Date(nowStats); thirtyAgo.setDate(nowStats.getDate() - 30)
-  const ninetyAgo    = new Date(nowStats); ninetyAgo.setDate(nowStats.getDate() - 90)
+  const nowStats  = new Date()
+  const thirtyAgo = new Date(nowStats); thirtyAgo.setDate(nowStats.getDate() - 30)
+  const ninetyAgo = new Date(nowStats); ninetyAgo.setDate(nowStats.getDate() - 90)
 
   const totalGallonsAllTime = supplies.reduce((s, x) => s + x.gallons, 0)
 
-  const gallonsLast30 = supplies
-    .filter(s => new Date(s.suppliedAt) >= thirtyAgo)
-    .reduce((s, x) => s + x.gallons, 0)
+  const suppliesLast30 = supplies.filter(s => new Date(s.suppliedAt) >= thirtyAgo)
+  const suppliesLast90 = supplies.filter(s => new Date(s.suppliedAt) >= ninetyAgo)
 
-  const gallonsLast90 = supplies
-    .filter(s => new Date(s.suppliedAt) >= ninetyAgo)
-    .reduce((s, x) => s + x.gallons, 0)
+  const gallonsLast30 = suppliesLast30.reduce((s, x) => s + x.gallons, 0)
+  const gallonsLast90 = suppliesLast90.reduce((s, x) => s + x.gallons, 0)
 
-  const avgDailyGallons   = gallonsLast30 / 30
-  const avgMonthlyGallons = gallonsLast90 / 3
+  // Count unique calendar days that had at least one supply (avoids dividing by 30/90
+  // when the customer only has a handful of actual deliveries)
+  const daysWithSupply30 = new Set(
+    suppliesLast30.map(s => new Date(s.suppliedAt).toISOString().slice(0, 10)),
+  ).size
+  const daysWithSupply90 = new Set(
+    suppliesLast90.map(s => new Date(s.suppliedAt).toISOString().slice(0, 10)),
+  ).size
+
+  // Average per delivery-day (not per calendar day) so a single 75-gal delivery
+  // shows 75 gal/día, not 75/30 = 2.5 gal/día
+  const avgDailyGallons   = daysWithSupply30 > 0 ? gallonsLast30 / daysWithSupply30 : 0
+  // Extrapolate to a 30-day "monthly" rate from the 90-day window
+  const avgMonthlyGallons = daysWithSupply90 > 0 ? (gallonsLast90 / daysWithSupply90) * 30 : 0
 
   const sortedSupplies = [...supplies].sort(
     (a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime(),
@@ -365,6 +378,7 @@ export async function getCustomerDetailData(
     totalPaidThisMonth,
     lastPayment,
     paymentCount: payments.length,
+    supplyCount:         supplies.length,
     totalGallonsAllTime,
     avgDailyGallons,
     avgMonthlyGallons,

@@ -17,6 +17,7 @@ import { waitingPaymentTypeHandler }     from "./states/waiting-payment-type"
 import { waitingConfirmSaveHandler }     from "./states/waiting-confirm-save"
 import { waitingPaymentCustomerHandler } from "./states/waiting-payment-customer"
 import { waitingPaymentConfirmHandler }  from "./states/waiting-payment-confirm"
+import { waitingCaptionConfirmHandler }  from "./states/waiting-caption-confirm"
 
 // ─── Handler registry ─────────────────────────────────────────────────────────
 // Key = ConversationState value, value = handler for that state.
@@ -28,6 +29,7 @@ const HANDLERS = new Map<ConversationState, StateHandler>([
   [waitingConfirmSaveHandler.state,     waitingConfirmSaveHandler],
   [waitingPaymentCustomerHandler.state, waitingPaymentCustomerHandler],
   [waitingPaymentConfirmHandler.state,  waitingPaymentConfirmHandler],
+  [waitingCaptionConfirmHandler.state,  waitingCaptionConfirmHandler],
 ])
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────

@@ -70,7 +70,7 @@ export default function Sidebar() {
         willChange: "width",
       }}
       className={cn(
-        "group hidden md:flex flex-col min-h-screen shrink-0 overflow-hidden",
+        "group hidden md:flex flex-col sticky top-0 h-screen shrink-0 overflow-hidden",
         "w-16 hover:w-56",
         "bg-[#1a3fa0] dark:bg-[#0f2660]",
         "shadow-[2px_0_12px_rgba(0,0,0,0.10)] dark:shadow-[2px_0_20px_rgba(0,0,0,0.35)]",

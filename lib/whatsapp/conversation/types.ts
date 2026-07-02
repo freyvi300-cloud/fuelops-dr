@@ -27,6 +27,11 @@ export const ConversationState = {
   WAITING_PAYMENT_CUSTOMER: "WAITING_PAYMENT_CUSTOMER",
   // Customer confirmed, waiting for CONFIRMAR / CANCELAR
   WAITING_PAYMENT_CONFIRM:  "WAITING_PAYMENT_CONFIRM",
+
+  // ── Caption fuzzy-match confirmation ─────────────────────────────────────
+  // Caption parsed a customer name but confidence < 1.0 (fuzzy match).
+  // Ask "¿Te refieres a X?" — sí → proceed, no → fall back to WAITING_CUSTOMER
+  WAITING_CAPTION_CONFIRM: "WAITING_CAPTION_CONFIRM",
 } as const
 
 export type ConversationState = typeof ConversationState[keyof typeof ConversationState]
@@ -55,6 +60,12 @@ export interface FlowPayload {
   truckName?:      string | null
   paymentType?:    "CASH" | "CREDIT"
   pricePerGallon?: number
+
+  // ── Caption confirm flow ─────────────────────────────────────────────────
+  // Fuzzy-matched candidate awaiting SI/NO confirmation
+  pendingCustomerId?:   string
+  pendingCustomerName?: string
+  pendingPricePerGallon?: number
 
   // ── Payment flow: from receipt OCR ───────────────────────────────────────
   paymentAmount?:    number

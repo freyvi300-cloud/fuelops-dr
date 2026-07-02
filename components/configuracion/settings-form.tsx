@@ -5,6 +5,7 @@ import { useRouter }               from "next/navigation"
 import {
   Settings, Building2, Droplets, AlertTriangle,
   CheckCircle2, Bell, Shield, Save, Sparkles,
+  MessageCircle, HardDrive,
 } from "lucide-react"
 import { cn }                  from "@/lib/utils"
 // ⚠ Do NOT import from @/lib/system-settings here — it imports Prisma,
@@ -188,6 +189,18 @@ export default function SettingsForm({ settings }: Props) {
     })
   }
 
+  type SettingsTab = "general" | "whatsapp" | "backups" | "notificaciones" | "seguridad"
+
+  const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
+    { id: "general",       label: "General",         icon: Building2     },
+    { id: "whatsapp",      label: "WhatsApp / OCR",  icon: MessageCircle },
+    { id: "backups",       label: "Backups",          icon: HardDrive     },
+    { id: "notificaciones",label: "Notificaciones",   icon: Bell          },
+    { id: "seguridad",     label: "Seguridad",        icon: Shield        },
+  ]
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>("general")
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
       {/* Header */}
@@ -205,311 +218,313 @@ export default function SettingsForm({ settings }: Props) {
               </p>
             </div>
           </div>
-          <button form="settings-form" type="submit" disabled={isPending}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shadow-sm shadow-blue-200 shrink-0">
-            <Save className="w-4 h-4" />
-            {isPending ? "Guardando..." : "Guardar configuración"}
-          </button>
+          {(activeTab === "general" || activeTab === "whatsapp") && (
+            <button form="settings-form" type="submit" disabled={isPending}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shadow-sm shadow-blue-200 shrink-0">
+              <Save className="w-4 h-4" />
+              {isPending ? "Guardando..." : "Guardar"}
+            </button>
+          )}
         </div>
 
-        {/* Success — shows ACTUAL values from DB, not what was typed */}
         {savedData && (
           <div className="mt-3 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <p className="text-xs font-sans text-emerald-700 font-bold">
-                Guardado y verificado desde la base de datos:
-              </p>
+              <p className="text-xs font-sans text-emerald-700 font-bold">Guardado y verificado:</p>
             </div>
             <p className="text-[11px] font-mono text-emerald-700 pl-6">
               Tanque: {savedData.tankCapacity.toLocaleString()} gal
               {" · "}🔴 ≤ {savedData.alertRedGallons.toLocaleString()} gal
               {" · "}🟡 ≤ {savedData.alertYellowGallons.toLocaleString()} gal
               {" · "}OCR: {savedData.ocrProvider} ({savedData.ocrEnabled ? "ON" : "OFF"}) {savedData.ocrMinConfidence}%
-              {" · "}Precio base: RD${savedData.defaultFuelPrice.toFixed(2)}
+              {" · "}RD${savedData.defaultFuelPrice.toFixed(2)}/gal
             </p>
           </div>
         )}
-        {/* Error — always visible, full message */}
         {error && (
           <div className="mt-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-bold text-red-700">Error al guardar — los cambios NO fueron aplicados</p>
+                <p className="text-xs font-bold text-red-700">Error al guardar</p>
                 <p className="text-[11px] font-sans text-red-700 mt-0.5">{error}</p>
               </div>
             </div>
           </div>
         )}
+
+        {/* Tabs */}
+        <div className="flex items-center gap-1 mt-4 -mb-5 overflow-x-auto">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button key={id} type="button" onClick={() => setActiveTab(id)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-xl border-b-2 transition-all whitespace-nowrap",
+                activeTab === id
+                  ? "border-blue-600 text-blue-700 bg-blue-50/60"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50",
+              )}>
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Form body */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <form id="settings-form" onSubmit={handleSubmit} className="space-y-5 max-w-2xl">
 
-          {/* ── Negocio ──────────────────────────────────────────────────── */}
-          <Section icon={Building2} iconBg="bg-blue-50" iconColor="text-blue-600"
-            title="Información del negocio"
-            description="Datos que aparecen en facturas, recibos y reportes.">
-            <div className="space-y-4">
-              <div>
-                <label className={LABEL}>Nombre del negocio</label>
-                <input name="businessName" defaultValue={settings.businessName}
-                  placeholder="Empresa de Distribución de Diésel" className={INPUT} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+          {/* ── General tab ───────────────────────────────────────────────── */}
+          {activeTab === "general" && <>
+            <Section icon={Building2} iconBg="bg-blue-50" iconColor="text-blue-600"
+              title="Información del negocio"
+              description="Datos que aparecen en facturas, recibos y reportes.">
+              <div className="space-y-4">
                 <div>
-                  <label className={LABEL}>RNC</label>
-                  <input name="rnc" defaultValue={settings.rnc ?? ""}
-                    placeholder="0-00-00000-0" className={INPUT} />
+                  <label className={LABEL}>Nombre del negocio</label>
+                  <input name="businessName" defaultValue={settings.businessName}
+                    placeholder="Empresa de Distribución de Diésel" className={INPUT} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={LABEL}>RNC</label>
+                    <input name="rnc" defaultValue={settings.rnc ?? ""}
+                      placeholder="0-00-00000-0" className={INPUT} />
+                  </div>
+                  <div>
+                    <label className={LABEL}>Teléfono</label>
+                    <input name="phone" defaultValue={settings.phone ?? ""}
+                      placeholder="809-000-0000" className={INPUT} />
+                  </div>
                 </div>
                 <div>
-                  <label className={LABEL}>Teléfono</label>
-                  <input name="phone" defaultValue={settings.phone ?? ""}
-                    placeholder="809-000-0000" className={INPUT} />
+                  <label className={LABEL}>Dirección</label>
+                  <input name="address" defaultValue={settings.address ?? ""}
+                    placeholder="Calle, ciudad, provincia" className={INPUT} />
                 </div>
               </div>
-              <div>
-                <label className={LABEL}>Dirección</label>
-                <input name="address" defaultValue={settings.address ?? ""}
-                  placeholder="Calle, ciudad, provincia" className={INPUT} />
-              </div>
-            </div>
-          </Section>
+            </Section>
 
-          {/* ── Combustible ──────────────────────────────────────────────── */}
-          <Section icon={Droplets} iconBg="bg-amber-50" iconColor="text-amber-500"
-            title="Configuración de combustible e inventario"
-            description="Capacidad del tanque y umbrales para las alertas automáticas.">
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className={LABEL}>
-                    Capacidad total del tanque (gal)
-                    <span className="ml-1 text-slate-400 font-normal">— obligatorio</span>
-                  </label>
-                  <input name="tankCapacity" type="number" min="1" step="1" required
-                    value={tankCapacity}
-                    onChange={e => setTankCapacity(parseFloat(e.target.value) || 0)}
-                    placeholder="20000" className={INPUT} />
-                </div>
-                <div>
-                  <label className={LABEL}>
-                    Precio base actual del combustible (RD$/gal)
-                    <span className="ml-1 text-slate-400 font-normal">— usado en descuentos %</span>
-                  </label>
-                  <input name="defaultFuelPrice" type="number" min="0" step="0.01"
-                    value={defaultFuelPrice}
-                    onChange={e => setDefaultFuelPrice(parseFloat(e.target.value) || 0)}
-                    placeholder="250.00" className={INPUT} />
-                  <p className="text-[10px] font-sans text-slate-400 mt-1">
-                    Clientes con descuento porcentual calculan su precio final sobre este valor.
-                    Cambiarlo no afecta facturas ya emitidas.
-                  </p>
-                </div>
-              </div>
-
-              <div className="border-t border-slate-100 pt-4">
-                <p className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                  Umbrales de alerta — en galones absolutos
-                </p>
+            <Section icon={Droplets} iconBg="bg-amber-50" iconColor="text-amber-500"
+              title="Combustible e inventario"
+              description="Capacidad del tanque y umbrales para las alertas automáticas.">
+              <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className={LABEL}>
-                      <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1.5 align-middle" />
-                      Inventario mínimo — alerta ROJA (gal)
+                      Capacidad total del tanque (gal)
+                      <span className="ml-1 text-slate-400 font-normal">— obligatorio</span>
                     </label>
-                    <input name="alertRedGallons" type="number" min="0" step="1" required
-                      value={alertRedGallons}
-                      onChange={e => setAlertRedGallons(parseFloat(e.target.value) || 0)}
-                      placeholder="2000" className={INPUT} />
-                    <p className="text-[10px] font-sans text-slate-400 mt-1">
-                      Inventario ≤ este valor → alerta crítica roja
-                    </p>
+                    <input name="tankCapacity" type="number" min="1" step="1" required
+                      value={tankCapacity}
+                      onChange={e => setTankCapacity(parseFloat(e.target.value) || 0)}
+                      placeholder="20000" className={INPUT} />
                   </div>
                   <div>
                     <label className={LABEL}>
-                      <span className="inline-block w-3 h-3 rounded-full bg-amber-400 mr-1.5 align-middle" />
-                      Inventario bajo — alerta AMARILLA (gal)
+                      Precio base del combustible (RD$/gal)
+                      <span className="ml-1 text-slate-400 font-normal">— descuentos %</span>
                     </label>
-                    <input name="alertYellowGallons" type="number" min="0" step="1" required
-                      value={alertYellowGallons}
-                      onChange={e => setAlertYellowGallons(parseFloat(e.target.value) || 0)}
-                      placeholder="4000" className={INPUT} />
+                    <input name="defaultFuelPrice" type="number" min="0" step="0.01"
+                      value={defaultFuelPrice}
+                      onChange={e => setDefaultFuelPrice(parseFloat(e.target.value) || 0)}
+                      placeholder="250.00" className={INPUT} />
                     <p className="text-[10px] font-sans text-slate-400 mt-1">
-                      Inventario ≤ este valor → alerta de precaución amarilla
+                      Clientes con descuento % calculan su precio sobre este valor.
                     </p>
                   </div>
                 </div>
-                <AlertPreview
-                  tankCapacity={tankCapacity}
-                  alertRed={alertRedGallons}
-                  alertYellow={alertYellowGallons}
-                />
+                <div className="border-t border-slate-100 pt-4">
+                  <p className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    Umbrales de alerta — en galones absolutos
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className={LABEL}>
+                        <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1.5 align-middle" />
+                        Alerta ROJA (gal)
+                      </label>
+                      <input name="alertRedGallons" type="number" min="0" step="1" required
+                        value={alertRedGallons}
+                        onChange={e => setAlertRedGallons(parseFloat(e.target.value) || 0)}
+                        placeholder="2000" className={INPUT} />
+                    </div>
+                    <div>
+                      <label className={LABEL}>
+                        <span className="inline-block w-3 h-3 rounded-full bg-amber-400 mr-1.5 align-middle" />
+                        Alerta AMARILLA (gal)
+                      </label>
+                      <input name="alertYellowGallons" type="number" min="0" step="1" required
+                        value={alertYellowGallons}
+                        onChange={e => setAlertYellowGallons(parseFloat(e.target.value) || 0)}
+                        placeholder="4000" className={INPUT} />
+                    </div>
+                  </div>
+                  <AlertPreview
+                    tankCapacity={tankCapacity}
+                    alertRed={alertRedGallons}
+                    alertYellow={alertYellowGallons}
+                  />
+                </div>
               </div>
-            </div>
-          </Section>
+            </Section>
 
-          {/* ── OCR ─────────────────────────────────────────────────────── */}
-          <Section icon={Sparkles} iconBg="bg-violet-50" iconColor="text-violet-600"
-            title="Lectura automática del medidor (OCR)"
-            description="IA que lee los galones desde la foto del medidor en Registrar suministro.">
-            <div className="space-y-4">
+            {/* Hidden fields for the non-active tab values so the form still submits them */}
+            <input type="hidden" name="ocrProvider"     value={ocrProvider} />
+            <input type="hidden" name="ocrEnabled"      value={ocrEnabled ? "true" : "false"} />
+            <input type="hidden" name="ocrMinConfidence" value={ocrMinConf} />
+          </>}
 
-              {/* Provider selector */}
-              <div>
-                <label className={LABEL}>Proveedor OCR</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {([
-                    { value: "GEMINI", label: "Gemini",  model: "gemini-2.5-flash", req: "GEMINI_API_KEY",  color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-400" },
-                    { value: "OPENAI", label: "OpenAI",  model: "gpt-4o-mini",      req: "OPENAI_API_KEY", color: "text-emerald-700",bg: "bg-emerald-50",border: "border-emerald-400" },
-                    { value: "MOCK",   label: "Mock",    model: "simulado",          req: "Sin API Key",    color: "text-violet-700", bg: "bg-violet-50", border: "border-violet-400" },
-                  ] as const).map(p => {
-                    const active = ocrProvider === p.value
-                    return (
-                      <button key={p.value} type="button"
-                        onClick={() => setOcrProvider(p.value)}
+          {/* ── WhatsApp / OCR tab ───────────────────────────────────────── */}
+          {activeTab === "whatsapp" && <>
+            <Section icon={Sparkles} iconBg="bg-violet-50" iconColor="text-violet-600"
+              title="Lectura automática del medidor (OCR)"
+              description="IA que lee los galones desde la foto del medidor.">
+              <div className="space-y-4">
+                <div>
+                  <label className={LABEL}>Proveedor OCR</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { value: "GEMINI", label: "Gemini",  model: "gemini-2.5-flash", req: "GEMINI_API_KEY",  color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-400" },
+                      { value: "OPENAI", label: "OpenAI",  model: "gpt-4o-mini",      req: "OPENAI_API_KEY", color: "text-emerald-700",bg: "bg-emerald-50",border: "border-emerald-400" },
+                      { value: "MOCK",   label: "Mock",    model: "simulado",          req: "Sin API Key",    color: "text-violet-700", bg: "bg-violet-50", border: "border-violet-400" },
+                    ] as const).map(p => {
+                      const active = ocrProvider === p.value
+                      return (
+                        <button key={p.value} type="button"
+                          onClick={() => setOcrProvider(p.value)}
+                          className={cn(
+                            "flex flex-col items-start gap-0.5 p-3 rounded-xl border-2 text-left transition-all",
+                            active ? `${p.border} ${p.bg}` : "border-slate-200 hover:border-slate-300 bg-white"
+                          )}>
+                          <span className={cn("text-sm font-bold", active ? p.color : "text-slate-700")}>{p.label}</span>
+                          <span className="text-[9px] font-mono text-slate-400">{p.model}</span>
+                          <span className="text-[9px] font-sans text-slate-400">{p.req}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <input type="hidden" name="ocrProvider" value={ocrProvider} />
+                  {ocrProvider !== "MOCK" && (
+                    <p className="text-[10px] font-sans text-slate-500 mt-2">
+                      Configura{" "}
+                      <code className="bg-slate-100 px-1 rounded text-[9px] font-mono">
+                        {ocrProvider === "OPENAI" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"}
+                      </code>{" "}
+                      en Vercel → Settings → Environment Variables.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className={LABEL}>Estado del OCR</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { value: "true",  label: "✅ Activado",   desc: "Analiza fotos automáticamente" },
+                      { value: "false", label: "⏸ Desactivado", desc: "Solo entrada manual de galones" },
+                    ].map(opt => (
+                      <button key={opt.value} type="button"
+                        onClick={() => setOcrEnabled(opt.value === "true")}
                         className={cn(
                           "flex flex-col items-start gap-0.5 p-3 rounded-xl border-2 text-left transition-all",
-                          active ? `${p.border} ${p.bg}` : "border-slate-200 hover:border-slate-300 bg-white"
+                          (opt.value === "true") === ocrEnabled
+                            ? "border-violet-500 bg-violet-50"
+                            : "border-slate-200 hover:border-slate-300"
                         )}>
-                        <span className={cn("text-sm font-bold", active ? p.color : "text-slate-700")}>
-                          {p.label}
-                        </span>
-                        <span className="text-[9px] font-mono text-slate-400">{p.model}</span>
-                        <span className="text-[9px] font-sans text-slate-400">{p.req}</span>
+                        <span className={cn("text-sm font-bold", (opt.value === "true") === ocrEnabled ? "text-violet-700" : "text-slate-700")}>{opt.label}</span>
+                        <span className="text-[10px] font-sans text-slate-400">{opt.desc}</span>
                       </button>
-                    )
-                  })}
+                    ))}
+                  </div>
+                  <input type="hidden" name="ocrEnabled" value={ocrEnabled ? "true" : "false"} />
                 </div>
-                <input type="hidden" name="ocrProvider" value={ocrProvider} />
-                {ocrProvider !== "MOCK" && (
-                  <p className="text-[10px] font-sans text-slate-500 mt-2">
-                    Asegúrate de configurar{" "}
-                    <code className="bg-slate-100 px-1 rounded text-[9px] font-mono">
-                      {ocrProvider === "OPENAI" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"}
-                    </code>{" "}
-                    en Vercel → Settings → Environment Variables.
-                  </p>
-                )}
-              </div>
 
-              {/* Enable/Disable */}
-              <div>
-                <label className={LABEL}>Estado del OCR</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { value: "true",  label: "✅ Activado",   desc: "Analiza fotos automáticamente" },
-                    { value: "false", label: "⏸ Desactivado", desc: "Solo entrada manual de galones" },
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setOcrEnabled(opt.value === "true")}
-                      className={cn(
-                        "flex flex-col items-start gap-0.5 p-3 rounded-xl border-2 text-left transition-all",
-                        (opt.value === "true") === ocrEnabled
-                          ? "border-violet-500 bg-violet-50"
-                          : "border-slate-200 hover:border-slate-300"
-                      )}
-                    >
-                      <span className={cn("text-sm font-bold",
-                        (opt.value === "true") === ocrEnabled ? "text-violet-700" : "text-slate-700")}>
-                        {opt.label}
-                      </span>
-                      <span className="text-[10px] font-sans text-slate-400">{opt.desc}</span>
-                    </button>
-                  ))}
-                </div>
-                <input type="hidden" name="ocrEnabled" value={ocrEnabled ? "true" : "false"} />
-              </div>
-
-              {/* Min confidence */}
-              <div>
-                <label className={LABEL}>
-                  Confianza mínima para auto-rellenar galones (%)
-                  <span className="ml-1.5 text-slate-400 font-normal">— default 90%</span>
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    name="ocrMinConfidence"
-                    type="number"
-                    min="0" max="100" step="1"
-                    value={ocrMinConf}
-                    onChange={e => setOcrMinConf(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-                    className={cn(INPUT, "w-24 text-center font-bold")}
-                  />
-                  <div className="flex-1">
-                    <input
-                      type="range" min="0" max="100" step="5"
+                <div>
+                  <label className={LABEL}>
+                    Confianza mínima para auto-rellenar (%)
+                    <span className="ml-1.5 text-slate-400 font-normal">— default 90%</span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input name="ocrMinConfidence" type="number" min="0" max="100" step="1"
                       value={ocrMinConf}
-                      onChange={e => setOcrMinConf(parseInt(e.target.value))}
-                      className="w-full accent-violet-600"
-                    />
-                    <div className="flex justify-between text-[10px] font-sans text-slate-400 mt-0.5">
-                      <span>0% — siempre mostrar</span>
-                      <span>100% — nunca mostrar</span>
+                      onChange={e => setOcrMinConf(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                      className={cn(INPUT, "w-24 text-center font-bold")} />
+                    <div className="flex-1">
+                      <input type="range" min="0" max="100" step="5"
+                        value={ocrMinConf}
+                        onChange={e => setOcrMinConf(parseInt(e.target.value))}
+                        className="w-full accent-violet-600" />
+                      <div className="flex justify-between text-[10px] font-sans text-slate-400 mt-0.5">
+                        <span>0% — siempre</span>
+                        <span>100% — nunca</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <p className="text-[11px] font-sans text-slate-500 mt-2">
-                  Si la IA detecta galones con confianza{" "}
-                  <strong>≥ {ocrMinConf}%</strong> → muestra botón &quot;Usar galones detectados&quot;.{" "}
-                  Si es menor → muestra &quot;Revisa manualmente antes de usar&quot;.
-                </p>
+
+                <a href="/ocr-test"
+                  className="inline-flex items-center gap-2 text-[11px] font-sans text-violet-600 hover:text-violet-700 font-semibold">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Probar el OCR con una imagen →
+                </a>
               </div>
+            </Section>
 
-              {/* OCR test link */}
-              <a
-                href="/ocr-test"
-                className="inline-flex items-center gap-2 text-[11px] font-sans text-violet-600 hover:text-violet-700 font-semibold"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                Probar el OCR con una imagen →
-              </a>
-            </div>
-          </Section>
+            {/* Hidden fields for General tab values */}
+            <input type="hidden" name="businessName"       value={settings.businessName} />
+            <input type="hidden" name="rnc"                value={settings.rnc ?? ""} />
+            <input type="hidden" name="phone"              value={settings.phone ?? ""} />
+            <input type="hidden" name="address"            value={settings.address ?? ""} />
+            <input type="hidden" name="tankCapacity"       value={tankCapacity} />
+            <input type="hidden" name="defaultFuelPrice"   value={defaultFuelPrice} />
+            <input type="hidden" name="alertRedGallons"    value={alertRedGallons} />
+            <input type="hidden" name="alertYellowGallons" value={alertYellowGallons} />
+          </>}
 
-          {/* ── Backup ───────────────────────────────────────────────────── */}
-          <BackupSection />
+          {/* ── Backups tab ───────────────────────────────────────────────── */}
+          {activeTab === "backups" && <BackupSection />}
 
-          {/* ── Notificaciones ───────────────────────────────────────────── */}
-          <Section icon={Bell} iconBg="bg-orange-50" iconColor="text-orange-500"
-            title="Notificaciones y alertas"
-            description="Cuándo y cómo recibir alertas del sistema.">
-            <div className="space-y-3">
-              {["Alerta de inventario bajo", "Facturas vencidas (30 días)", "Resumen diario por WhatsApp"].map(label => (
-                <label key={label} className="flex items-center gap-3 cursor-not-allowed opacity-60">
-                  <div className="w-9 h-5 bg-slate-200 rounded-full relative shrink-0">
-                    <div className="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm" />
-                  </div>
-                  <span className="text-sm font-sans text-slate-600">{label}</span>
-                  <span className="text-[10px] text-slate-400 font-sans">(Próximamente)</span>
-                </label>
-              ))}
-            </div>
-          </Section>
-
-          {/* ── Seguridad ────────────────────────────────────────────────── */}
-          <Section icon={Shield} iconBg="bg-violet-50" iconColor="text-violet-600"
-            title="Seguridad y acceso"
-            description="Contraseña y sesión del administrador.">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={LABEL}>Contraseña actual</label>
-                <input disabled type="password" value="••••••••" readOnly className={INPUT} />
+          {/* ── Notificaciones tab ───────────────────────────────────────── */}
+          {activeTab === "notificaciones" && (
+            <Section icon={Bell} iconBg="bg-orange-50" iconColor="text-orange-500"
+              title="Notificaciones y alertas"
+              description="Cuándo y cómo recibir alertas del sistema.">
+              <div className="space-y-3">
+                {["Alerta de inventario bajo", "Facturas vencidas (30 días)", "Resumen diario por WhatsApp"].map(label => (
+                  <label key={label} className="flex items-center gap-3 cursor-not-allowed opacity-60">
+                    <div className="w-9 h-5 bg-slate-200 rounded-full relative shrink-0">
+                      <div className="w-4 h-4 bg-white rounded-full absolute top-0.5 left-0.5 shadow-sm" />
+                    </div>
+                    <span className="text-sm font-sans text-slate-600">{label}</span>
+                    <span className="text-[10px] text-slate-400 font-sans">(Próximamente)</span>
+                  </label>
+                ))}
               </div>
-              <div>
-                <label className={LABEL}>Nueva contraseña</label>
-                <input disabled type="password" placeholder="••••••••" className={INPUT} />
+            </Section>
+          )}
+
+          {/* ── Seguridad tab ─────────────────────────────────────────────── */}
+          {activeTab === "seguridad" && (
+            <Section icon={Shield} iconBg="bg-violet-50" iconColor="text-violet-600"
+              title="Seguridad y acceso"
+              description="Contraseña y sesión del administrador.">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={LABEL}>Contraseña actual</label>
+                  <input disabled type="password" value="••••••••" readOnly className={INPUT} />
+                </div>
+                <div>
+                  <label className={LABEL}>Nueva contraseña</label>
+                  <input disabled type="password" placeholder="••••••••" className={INPUT} />
+                </div>
               </div>
-            </div>
-            <p className="text-[11px] font-sans text-slate-400 mt-3">
-              Disponible cuando se active la autenticación completa.
-            </p>
-          </Section>
+              <p className="text-[11px] font-sans text-slate-400 mt-3">
+                Disponible cuando se active la autenticación completa.
+              </p>
+            </Section>
+          )}
 
           <div className="pb-6" />
         </form>

@@ -232,7 +232,7 @@ function ConsumoChart({ supplies }: { supplies: CustomerDetailData["supplies"] }
       {hasData ? (
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#94a3b8" }}
               tickLine={false} axisLine={false}
               interval={filter === "MES" ? 4 : 0} />
@@ -474,47 +474,53 @@ export default function CustomerDetailClient({ data }: { data: CustomerDetailDat
 // ─── Resumen Tab ──────────────────────────────────────────────────────────────
 
 function ConsumptionStatsStrip({ data }: { data: CustomerDetailData }) {
+  const onlyOneSupply = data.supplyCount === 1
+
   const stats = [
     {
-      icon: TrendingUp,
-      label: "Prom. diario (30d)",
+      icon:  TrendingUp,
+      label: onlyOneSupply ? "Único suministro" : "Prom. por entrega",
       value: data.avgDailyGallons > 0
         ? `${data.avgDailyGallons.toLocaleString("es-DO", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} gal`
         : "—",
+      sub:   onlyOneSupply ? "1 registro" : data.avgDailyGallons > 0 ? "gal / día con entrega" : undefined,
       color: "text-blue-600",
       bg:    "bg-blue-50",
     },
     {
-      icon: Fuel,
-      label: "Prom. mensual (90d)",
-      value: data.avgMonthlyGallons > 0
-        ? `${data.avgMonthlyGallons.toLocaleString("es-DO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} gal`
-        : "—",
-      color: "text-violet-600",
-      bg:    "bg-violet-50",
-    },
-    {
-      icon: Activity,
+      icon:  Fuel,
       label: "Total histórico",
       value: data.totalGallonsAllTime > 0
         ? `${data.totalGallonsAllTime.toLocaleString("es-DO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} gal`
         : "—",
+      sub:   `${data.supplyCount} suministro${data.supplyCount !== 1 ? "s" : ""}`,
+      color: "text-violet-600",
+      bg:    "bg-violet-50",
+    },
+    {
+      icon:  Activity,
+      label: "Prom. mensual",
+      value: data.avgMonthlyGallons > 0
+        ? `${data.avgMonthlyGallons.toLocaleString("es-DO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} gal`
+        : "—",
+      sub:   data.avgMonthlyGallons > 0 ? "estimado / mes" : undefined,
       color: "text-emerald-600",
       bg:    "bg-emerald-50",
     },
     {
-      icon: Calendar,
+      icon:  Calendar,
       label: "Última compra",
       value: data.lastPurchaseDate
         ? new Date(data.lastPurchaseDate).toLocaleDateString("es-DO", { day: "2-digit", month: "short", year: "numeric" })
         : "—",
+      sub:   undefined,
       color: "text-amber-600",
       bg:    "bg-amber-50",
     },
   ]
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      {stats.map(({ icon: Icon, label, value, color, bg }) => (
+      {stats.map(({ icon: Icon, label, value, sub, color, bg }) => (
         <div key={label} className="flex items-center gap-3 px-4 py-3 bg-slate-50 rounded-xl border border-slate-100">
           <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", bg)}>
             <Icon className={cn("w-4 h-4", color)} />
@@ -522,6 +528,7 @@ function ConsumptionStatsStrip({ data }: { data: CustomerDetailData }) {
           <div className="min-w-0">
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider leading-none">{label}</p>
             <p className="text-sm font-bold text-slate-800 mt-0.5 leading-tight truncate">{value}</p>
+            {sub && <p className="text-[10px] text-slate-400 mt-0.5 leading-none">{sub}</p>}
           </div>
         </div>
       ))}
@@ -618,7 +625,7 @@ function ResumenTab({ data }: { data: CustomerDetailData }) {
             <table className="w-full text-xs font-sans">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/70">
-                  {["Código","Nombre","Tipo","Estado","Galones"].map((h, i) => (
+                  {["Rótulo","Nombre","Tipo","Estado","Galones"].map((h, i) => (
                     <th key={h} className={cn(
                       "py-2.5 font-semibold text-slate-500 uppercase tracking-wider text-[10px]",
                       i === 0 ? "text-left pl-5" :

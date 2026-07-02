@@ -185,13 +185,28 @@ interface CaptionResolved {
   truckId:        string | null
   truckName:      string | null
   pricePerGallon: number
+  /** true when the match was fuzzy and needs user confirmation */
+  needsConfirm?:  boolean
+}
+
+/**
+ * Simple word-overlap similarity: what fraction of tokens in `query`
+ * appear (as a substring) in `target`?  Range 0–1.
+ */
+function tokenSimilarity(query: string, target: string): number {
+  const qTokens = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (qTokens.length === 0) return 0
+  const t = target.toLowerCase()
+  const hits = qTokens.filter(tok => t.includes(tok)).length
+  return hits / qTokens.length
 }
 
 async function resolveCaption(
   customerName: string,
   truckCode:    string | null,
 ): Promise<CaptionResolved | null> {
-  const customers = await prisma.customer.findMany({
+  // 1. Exact substring match (case-insensitive) — original behavior
+  const exactMatches = await prisma.customer.findMany({
     where: { name: { contains: customerName, mode: "insensitive" }, status: "ACTIVE" },
     select: {
       id: true, name: true,
@@ -202,16 +217,50 @@ async function resolveCaption(
         take: 1,
       },
     },
-    take: 2,
+    take: 3,
   })
 
-  // Require unambiguous customer match
-  if (customers.length !== 1) return null
+  // Unambiguous exact match — proceed immediately
+  if (exactMatches.length === 1) {
+    const c       = exactMatches[0]
+    const truck   = c.trucks[0] ?? null
+    const settings = await getSystemSettings()
+    const pricePerGallon = resolveCustomerPrice(
+      {
+        priceType:          c.priceType as "FIXED" | "DISCOUNT_PCT",
+        fuelPricePerGallon: c.fuelPricePerGallon.toNumber(),
+        priceDiscount:      c.priceDiscount.toNumber(),
+      },
+      settings.defaultFuelPrice,
+    )
+    return { customerId: c.id, customerName: c.name, truckId: truck?.id ?? null, truckName: truck ? `${truck.code} · ${truck.name}` : null, pricePerGallon }
+  }
 
-  const c       = customers[0]
+  // 2. No exact match or ambiguous — try fuzzy word-overlap against ALL customers
+  const allCustomers = await prisma.customer.findMany({
+    where:  { status: "ACTIVE" },
+    select: {
+      id: true, name: true,
+      priceType: true, fuelPricePerGallon: true, priceDiscount: true,
+      trucks: {
+        where: truckCode ? { code: truckCode, status: "ACTIVE" } : { status: "ACTIVE" },
+        select: { id: true, code: true, name: true },
+        take: 1,
+      },
+    },
+  })
+
+  const scored = allCustomers
+    .map(c => ({ c, score: tokenSimilarity(customerName, c.name) }))
+    .filter(x => x.score >= 0.5)
+    .sort((a, b) => b.score - a.score)
+
+  // Need a single candidate with meaningful confidence
+  if (scored.length !== 1) return null
+
+  const { c, score } = scored[0]
   const truck   = c.trucks[0] ?? null
   const settings = await getSystemSettings()
-
   const pricePerGallon = resolveCustomerPrice(
     {
       priceType:          c.priceType as "FIXED" | "DISCOUNT_PCT",
@@ -222,11 +271,12 @@ async function resolveCaption(
   )
 
   return {
-    customerId:     c.id,
-    customerName:   c.name,
-    truckId:        truck?.id ?? null,
-    truckName:      truck ? `${truck.code} · ${truck.name}` : null,
+    customerId:    c.id,
+    customerName:  c.name,
+    truckId:       truck?.id ?? null,
+    truckName:     truck ? `${truck.code} · ${truck.name}` : null,
     pricePerGallon,
+    needsConfirm:  score < 1.0,   // fuzzy match → ask user to confirm
   }
 }
 
@@ -435,7 +485,30 @@ async function handleMeterImage(
     provider:   ocrProvider,
   }
 
-  if (resolved) {
+  if (resolved && resolved.needsConfirm) {
+    // ── FUZZY MATCH: ask user to confirm before proceeding ────────────────
+    const payload: FlowPayload = {
+      ...basePayload,
+      pendingCustomerId:    resolved.customerId,
+      pendingCustomerName:  resolved.customerName,
+      pendingPricePerGallon: resolved.pricePerGallon,
+      truckId:   resolved.truckId,
+      truckName: resolved.truckName,
+    }
+    await startSupplyConversation(msg.from, payload, ConversationState.WAITING_CAPTION_CONFIRM)
+
+    await sendTextMessage(msg.from,
+      `⛽ *Lectura del medidor*\n\n` +
+      `Galones: *${ocrGallons!.toFixed(2)} gal*\n` +
+      `${confNote}\n\n` +
+      `Detecté el nombre _"${parsed.customerName}"_ en la descripción.\n` +
+      `¿Te refieres al cliente *${resolved.customerName}*?\n\n` +
+      `• Responde *sí* para confirmar\n` +
+      `• Responde *no* para escribir el nombre correcto`
+    )
+    console.log(`[Nova/Image] Fuzzy match → WAITING_CAPTION_CONFIRM for ${who}`)
+
+  } else if (resolved) {
     // ── AUTO-RESOLVED: jump directly to WAITING_PAYMENT_TYPE ──────────────
     const payload: FlowPayload = {
       ...basePayload,

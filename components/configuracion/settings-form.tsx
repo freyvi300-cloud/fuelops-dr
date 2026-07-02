@@ -12,6 +12,7 @@ import { cn }                  from "@/lib/utils"
 // Type is defined inline below.
 import { updateSystemSettings } from "@/app/actions/settings"
 import type { SavedSettings }   from "@/app/actions/settings"
+import BackupSection            from "./backup-section"
 
 // ─── Inline type — no server-only imports ─────────────────────────────────────
 // This mirrors SystemSettings from lib/system-settings.ts but lives in the
@@ -470,6 +471,9 @@ export default function SettingsForm({ settings }: Props) {
               </a>
             </div>
           </Section>
+
+          {/* ── Backup ───────────────────────────────────────────────────── */}
+          <BackupSection />
 
           {/* ── Notificaciones ───────────────────────────────────────────── */}
           <Section icon={Bell} iconBg="bg-orange-50" iconColor="text-orange-500"

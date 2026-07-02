@@ -62,6 +62,17 @@ export interface CustomerTruckItem {
   notes:         string | null
 }
 
+export interface TimelineEvent {
+  id:       string
+  type:     "supply" | "payment" | "invoice"
+  date:     string    // ISO
+  title:    string
+  subtitle: string
+  amount?:  number
+  gallons?: number
+  status?:  string
+}
+
 export interface CustomerDetailData {
   // Core
   id:                      string
@@ -95,6 +106,14 @@ export interface CustomerDetailData {
   totalPaidThisMonth:  number
   lastPayment:         CustomerPaymentItem | null
   paymentCount:        number
+  // Consumption stats
+  totalGallonsAllTime:  number
+  avgDailyGallons:      number    // last 30 days
+  avgMonthlyGallons:    number    // last 90 days / 3
+  lastPurchaseDate:     string | null
+  firstPurchaseDate:    string | null
+  // Timeline
+  timeline: TimelineEvent[]
 }
 
 // ─── Helper: mark overdue invoices for this customer ─────────────────────────
@@ -247,6 +266,77 @@ export async function getCustomerDetailData(
     }
   })
 
+  // ── Consumption stats ─────────────────────────────────────────────────────
+  const nowStats     = new Date()
+  const thirtyAgo    = new Date(nowStats); thirtyAgo.setDate(nowStats.getDate() - 30)
+  const ninetyAgo    = new Date(nowStats); ninetyAgo.setDate(nowStats.getDate() - 90)
+
+  const totalGallonsAllTime = supplies.reduce((s, x) => s + x.gallons, 0)
+
+  const gallonsLast30 = supplies
+    .filter(s => new Date(s.suppliedAt) >= thirtyAgo)
+    .reduce((s, x) => s + x.gallons, 0)
+
+  const gallonsLast90 = supplies
+    .filter(s => new Date(s.suppliedAt) >= ninetyAgo)
+    .reduce((s, x) => s + x.gallons, 0)
+
+  const avgDailyGallons   = gallonsLast30 / 30
+  const avgMonthlyGallons = gallonsLast90 / 3
+
+  const sortedSupplies = [...supplies].sort(
+    (a, b) => new Date(b.suppliedAt).getTime() - new Date(a.suppliedAt).getTime(),
+  )
+  const lastPurchaseDate  = sortedSupplies[0]?.suppliedAt ?? null
+  const firstPurchaseDate = sortedSupplies[sortedSupplies.length - 1]?.suppliedAt ?? null
+
+  // ── Timeline ──────────────────────────────────────────────────────────────
+  const timelineEvents: TimelineEvent[] = []
+
+  for (const s of supplies) {
+    timelineEvents.push({
+      id:       `sup-${s.id}`,
+      type:     "supply",
+      date:     s.suppliedAt,
+      title:    `Suministro de ${s.gallons.toLocaleString("es-DO", { minimumFractionDigits: 2 })} gal`,
+      subtitle: s.truckCode
+        ? `${s.truckCode} · ${s.truckName}`
+        : s.invoiceNumber
+          ? `Factura ${s.invoiceNumber}`
+          : "Sin camión registrado",
+      gallons: s.gallons,
+      amount:  s.total,
+    })
+  }
+
+  for (const p of payments) {
+    timelineEvents.push({
+      id:       `pay-${p.id}`,
+      type:     "payment",
+      date:     p.paymentDate,
+      title:    `Pago recibido — RD$${p.amount.toLocaleString("es-DO", { minimumFractionDigits: 2 })}`,
+      subtitle: p.invoiceNumber
+        ? `Factura ${p.invoiceNumber} · ${PAYMENT_LABELS[p.paymentMethod] ?? p.paymentMethod}`
+        : PAYMENT_LABELS[p.paymentMethod] ?? p.paymentMethod,
+      amount: p.amount,
+    })
+  }
+
+  for (const inv of invoicesAll) {
+    timelineEvents.push({
+      id:       `inv-${inv.id}`,
+      type:     "invoice",
+      date:     inv.issueDate,
+      title:    `Factura ${inv.invoiceNumber}`,
+      subtitle: `${inv.gallons.toLocaleString("es-DO", { minimumFractionDigits: 2 })} gal · RD$${inv.total.toLocaleString("es-DO", { minimumFractionDigits: 2 })}`,
+      status:   inv.status,
+      amount:   inv.total,
+      gallons:  inv.gallons,
+    })
+  }
+
+  timelineEvents.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
   return {
     id:                      raw.id,
     name:                    raw.name,
@@ -275,5 +365,19 @@ export async function getCustomerDetailData(
     totalPaidThisMonth,
     lastPayment,
     paymentCount: payments.length,
+    totalGallonsAllTime,
+    avgDailyGallons,
+    avgMonthlyGallons,
+    lastPurchaseDate,
+    firstPurchaseDate,
+    timeline: timelineEvents,
   }
+}
+
+const PAYMENT_LABELS: Record<string, string> = {
+  CASH:         "Efectivo",
+  TRANSFER:     "Transferencia",
+  BANK_DEPOSIT: "Depósito bancario",
+  CHECK:        "Cheque",
+  OTHER:        "Otro",
 }

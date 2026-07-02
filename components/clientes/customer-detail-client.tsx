@@ -11,7 +11,10 @@ import {
   Droplets, FileText, AlertTriangle, DollarSign,
   Calendar, CheckCircle2, XCircle, AlertCircle,
   Truck, Clock, ArrowLeft, Pencil, Hash,
+  TrendingUp, Fuel, Receipt,
+  Activity,
 } from "lucide-react"
+import type { TimelineEvent } from "@/app/actions/customer-detail"
 import { cn } from "@/lib/utils"
 import type { CustomerDetailData } from "@/app/actions/customer-detail"
 
@@ -304,7 +307,7 @@ function TruckDonut({ trucks }: { trucks: CustomerDetailData["trucks"] }) {
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-type Tab = "resumen" | "suministros" | "facturas" | "pagos" | "camiones"
+type Tab = "resumen" | "suministros" | "facturas" | "pagos" | "camiones" | "timeline"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "resumen",     label: "Resumen"     },
@@ -312,6 +315,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "facturas",    label: "Facturas"    },
   { id: "pagos",       label: "Pagos"       },
   { id: "camiones",    label: "Camiones"    },
+  { id: "timeline",    label: "Historial"   },
 ]
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -459,6 +463,7 @@ export default function CustomerDetailClient({ data }: { data: CustomerDetailDat
             {tab === "facturas"    && <FacturasTab data={data} />}
             {tab === "pagos"       && <PagosTab data={data} />}
             {tab === "camiones"    && <CamionesTab data={data} />}
+            {tab === "timeline"    && <TimelineTab data={data} />}
           </div>
         </div>
       </div>
@@ -468,9 +473,68 @@ export default function CustomerDetailClient({ data }: { data: CustomerDetailDat
 
 // ─── Resumen Tab ──────────────────────────────────────────────────────────────
 
+function ConsumptionStatsStrip({ data }: { data: CustomerDetailData }) {
+  const stats = [
+    {
+      icon: TrendingUp,
+      label: "Prom. diario (30d)",
+      value: data.avgDailyGallons > 0
+        ? `${data.avgDailyGallons.toLocaleString("es-DO", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} gal`
+        : "—",
+      color: "text-blue-600",
+      bg:    "bg-blue-50",
+    },
+    {
+      icon: Fuel,
+      label: "Prom. mensual (90d)",
+      value: data.avgMonthlyGallons > 0
+        ? `${data.avgMonthlyGallons.toLocaleString("es-DO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} gal`
+        : "—",
+      color: "text-violet-600",
+      bg:    "bg-violet-50",
+    },
+    {
+      icon: Activity,
+      label: "Total histórico",
+      value: data.totalGallonsAllTime > 0
+        ? `${data.totalGallonsAllTime.toLocaleString("es-DO", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} gal`
+        : "—",
+      color: "text-emerald-600",
+      bg:    "bg-emerald-50",
+    },
+    {
+      icon: Calendar,
+      label: "Última compra",
+      value: data.lastPurchaseDate
+        ? new Date(data.lastPurchaseDate).toLocaleDateString("es-DO", { day: "2-digit", month: "short", year: "numeric" })
+        : "—",
+      color: "text-amber-600",
+      bg:    "bg-amber-50",
+    },
+  ]
+  return (
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {stats.map(({ icon: Icon, label, value, color, bg }) => (
+        <div key={label} className="flex items-center gap-3 px-4 py-3 bg-slate-50 rounded-xl border border-slate-100">
+          <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", bg)}>
+            <Icon className={cn("w-4 h-4", color)} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider leading-none">{label}</p>
+            <p className="text-sm font-bold text-slate-800 mt-0.5 leading-tight truncate">{value}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ResumenTab({ data }: { data: CustomerDetailData }) {
   return (
     <div className="space-y-5">
+      {/* Consumption stats strip */}
+      <ConsumptionStatsStrip data={data} />
+
       {/* Row 1: Datos comerciales + Consumo chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
@@ -988,5 +1052,153 @@ function CamionesTab({ data }: { data: CustomerDetailData }) {
         </table>
       </div>
     </SectionCard>
+  )
+}
+
+// ─── Timeline Tab ─────────────────────────────────────────────────────────────
+
+const TL_CONFIG: Record<TimelineEvent["type"], {
+  icon:    React.ElementType
+  iconBg:  string
+  iconClr: string
+  label:   string
+}> = {
+  supply: {
+    icon:    Fuel,
+    iconBg:  "bg-blue-100",
+    iconClr: "text-blue-600",
+    label:   "Suministro",
+  },
+  payment: {
+    icon:    CheckCircle2,
+    iconBg:  "bg-emerald-100",
+    iconClr: "text-emerald-600",
+    label:   "Pago",
+  },
+  invoice: {
+    icon:    Receipt,
+    iconBg:  "bg-amber-100",
+    iconClr: "text-amber-600",
+    label:   "Factura",
+  },
+}
+
+function TimelineTab({ data }: { data: CustomerDetailData }) {
+  const [filter, setFilter] = useState<"all" | TimelineEvent["type"]>("all")
+
+  const events = filter === "all"
+    ? data.timeline
+    : data.timeline.filter(e => e.type === filter)
+
+  if (data.timeline.length === 0) {
+    return (
+      <div className="py-12 text-center text-slate-400">
+        <Clock className="w-10 h-10 mx-auto mb-2 text-slate-200" />
+        <p className="text-sm font-medium">Sin actividad registrada</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Filter chips */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { value: "all",     label: "Todo"         },
+          { value: "supply",  label: "Suministros"  },
+          { value: "payment", label: "Pagos"        },
+          { value: "invoice", label: "Facturas"     },
+        ] as const).map(opt => (
+          <button key={opt.value}
+            onClick={() => setFilter(opt.value)}
+            className={cn(
+              "px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border",
+              filter === opt.value
+                ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                : "bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-300",
+            )}>
+            {opt.label}
+          </button>
+        ))}
+        <span className="ml-auto text-xs font-sans text-slate-400">
+          {events.length} evento{events.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Timeline */}
+      <div className="relative">
+        {/* Vertical line */}
+        <div className="absolute left-5 top-0 bottom-0 w-px bg-slate-100" />
+
+        <div className="space-y-1">
+          {events.map((ev, idx) => {
+            const cfg = TL_CONFIG[ev.type]
+            const Icon = cfg.icon
+            const isFirst = idx === 0 || (
+              new Date(ev.date).toDateString() !==
+              new Date(events[idx - 1].date).toDateString()
+            )
+            return (
+              <div key={ev.id}>
+                {/* Date separator */}
+                {isFirst && (
+                  <div className="flex items-center gap-3 py-2 pl-14 pr-2">
+                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                      {new Date(ev.date).toLocaleDateString("es-DO", { day: "numeric", month: "long", year: "numeric" })}
+                    </span>
+                    <div className="flex-1 h-px bg-slate-100" />
+                  </div>
+                )}
+
+                <div className="flex items-start gap-4 py-2 pl-2 pr-4 hover:bg-slate-50/70 rounded-xl transition-colors group">
+                  {/* Icon bubble */}
+                  <div className={cn(
+                    "w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ring-2 ring-white",
+                    cfg.iconBg,
+                  )}>
+                    <Icon className={cn("w-3.5 h-3.5", cfg.iconClr)} />
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{ev.title}</p>
+                        <p className="text-[11px] text-slate-400 font-sans mt-0.5 truncate">{ev.subtitle}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {ev.amount !== undefined && (
+                          <p className={cn(
+                            "text-xs font-bold tabular-nums",
+                            ev.type === "payment" ? "text-emerald-600" : "text-slate-700",
+                          )}>
+                            {ev.type === "payment" ? "+" : ""}RD${ev.amount.toLocaleString("es-DO", { minimumFractionDigits: 2 })}
+                          </p>
+                        )}
+                        <p className="text-[10px] text-slate-400 font-sans mt-0.5">
+                          {new Date(ev.date).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Invoice status badge */}
+                    {ev.type === "invoice" && ev.status && (
+                      <div className="mt-1">
+                        <span className={cn(
+                          "inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold border",
+                          INVOICE_STATUS[ev.status]?.cls ?? "bg-slate-50 text-slate-500",
+                        )}>
+                          {INVOICE_STATUS[ev.status]?.label ?? ev.status}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
   )
 }

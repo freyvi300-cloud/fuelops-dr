@@ -5,8 +5,13 @@ import { useRouter } from "next/navigation"
 import {
   Droplets, Plus, Bell, ChevronDown, TrendingUp,
   TrendingDown, Clock, X, AlertCircle, ChevronLeft,
-  ChevronRight, Fuel, Wrench, Search,
+  ChevronRight, Fuel, Wrench, Search, CalendarDays,
+  TriangleAlert, Gauge,
 } from "lucide-react"
+import {
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend,
+} from "recharts"
 import { cn } from "@/lib/utils"
 import type { SerializedMovement, MovementFormData, InventoryStats } from "@/app/actions/inventory"
 import { createMovement } from "@/app/actions/inventory"
@@ -60,6 +65,124 @@ function fmtDatetime(iso: string) {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
+}
+
+// ─── Alert banner ─────────────────────────────────────────────────────────────
+
+function AlertBanner({ stats }: { stats: InventoryStats }) {
+  if (stats.alertLevel === "normal") return null
+  const red = stats.alertLevel === "red"
+  return (
+    <div className={cn(
+      "flex items-start gap-3 px-5 py-4 rounded-2xl border text-sm font-sans",
+      red
+        ? "bg-red-50 border-red-200 text-red-800"
+        : "bg-amber-50 border-amber-200 text-amber-800",
+    )}>
+      <TriangleAlert className={cn("w-5 h-5 shrink-0 mt-0.5", red ? "text-red-500" : "text-amber-500")} />
+      <div>
+        <p className="font-semibold">
+          {red
+            ? `¡Stock crítico! Solo ${fmtGal(stats.availableGallons)} disponibles`
+            : `Inventario bajo — ${fmtGal(stats.availableGallons)} disponibles`}
+        </p>
+        <p className={cn("text-xs mt-0.5", red ? "text-red-600" : "text-amber-700")}>
+          {red
+            ? `Umbral crítico: ${fmtGal(stats.alertRedGallons)}. Considera realizar un pedido urgente.`
+            : `Umbral de alerta: ${fmtGal(stats.alertYellowGallons)}. Planifica la próxima carga.`}
+          {stats.daysRemaining !== null && ` Quedan aproximadamente ${stats.daysRemaining} días de combustible.`}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Consumption chart ────────────────────────────────────────────────────────
+
+function ConsumptionChart({ stats }: { stats: InventoryStats }) {
+  const data = stats.consumptionChart
+  const hasData = data.some(d => d.salidas > 0)
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-5"
+      style={{ boxShadow: "var(--shadow-card)" }}>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-bold text-slate-800">Consumo últimos 30 días</h2>
+          <p className="text-[11px] text-slate-400 font-sans mt-0.5">Salidas diarias (barras) y balance del tanque (línea)</p>
+        </div>
+        <div className="flex items-center gap-4 text-[11px] font-sans text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-blue-500 inline-block" />
+            Balance
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-red-400 inline-block" />
+            Salidas / día
+          </span>
+        </div>
+      </div>
+
+      {!hasData ? (
+        <div className="h-40 flex items-center justify-center">
+          <p className="text-sm text-slate-300 font-sans">Sin salidas en los últimos 30 días</p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 10, fill: "#94a3b8", fontFamily: "var(--font-sans)" }}
+              tickLine={false}
+              axisLine={false}
+              interval={4}
+            />
+            <YAxis
+              yAxisId="left"
+              tick={{ fontSize: 10, fill: "#94a3b8", fontFamily: "var(--font-sans)" }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => v.toLocaleString("es-DO")}
+              width={52}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 10, fill: "#94a3b8", fontFamily: "var(--font-sans)" }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => v.toLocaleString("es-DO")}
+              width={52}
+            />
+            <Tooltip
+              contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 11, fontFamily: "var(--font-sans)" }}
+              formatter={(value, name) => [
+                `${Number(value).toLocaleString("es-DO", { minimumFractionDigits: 2 })} gal`,
+                name === "salidas" ? "Salidas" : "Balance",
+              ]}
+            />
+            <Bar
+              yAxisId="left"
+              dataKey="salidas"
+              fill="#f87171"
+              radius={[3, 3, 0, 0]}
+              maxBarSize={20}
+            />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="balance"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: "#3b82f6" }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  )
 }
 
 // ─── KPI card ─────────────────────────────────────────────────────────────────
@@ -294,9 +417,6 @@ export default function InventoryClient({ movements, stats }: Props) {
     })
   }
 
-  const lastMov = stats.lastMovement
-  const lastMovCfg = lastMov ? MOVEMENT_CONFIG[lastMov.type as keyof typeof MOVEMENT_CONFIG] : null
-
   return (
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
 
@@ -342,6 +462,9 @@ export default function InventoryClient({ movements, stats }: Props) {
       {/* ══ BODY ═════════════════════════════════════════════════════════════ */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
+        {/* ── Alert banner ───────────────────────────────────────────────── */}
+        <AlertBanner stats={stats} />
+
         {/* ── KPI Cards ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {/* Combustible disponible — highlighted card */}
@@ -353,9 +476,25 @@ export default function InventoryClient({ movements, stats }: Props) {
             value={fmtGal(Math.max(0, stats.availableGallons))}
             highlight
             sub={
-              <p className="text-[11px] font-sans text-blue-200">
-                Nivel actual del tanque
-              </p>
+              stats.tankCapacity > 0 ? (
+                <div className="mt-1.5">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-[10px] text-blue-200 font-sans">Llenado del tanque</span>
+                    <span className="text-[10px] text-white font-bold">{stats.fillPct}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${stats.fillPct}%`,
+                        background: stats.fillPct <= 15 ? "#f87171" : stats.fillPct <= 30 ? "#fbbf24" : "#86efac",
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] font-sans text-blue-200">Nivel actual del tanque</p>
+              )
             }
           />
 
@@ -374,26 +513,29 @@ export default function InventoryClient({ movements, stats }: Props) {
             iconColor="text-red-500"
             label="Vendido este mes"
             value={fmtGal(stats.soldThisMonth)}
-            sub={<p className="text-[11px] font-sans text-slate-400">Salidas acumuladas</p>}
+            sub={
+              <p className="text-[11px] font-sans text-slate-400">
+                Esta semana: {fmtGal(stats.soldThisWeek)}
+              </p>
+            }
           />
 
           <KpiCard
-            icon={Clock}
-            iconBg="bg-amber-50"
-            iconColor="text-amber-500"
-            label="Último movimiento"
-            value={lastMov ? fmtDate(lastMov.movedAt) : "—"}
+            icon={CalendarDays}
+            iconBg="bg-violet-50"
+            iconColor="text-violet-600"
+            label="Proyección de días"
+            value={stats.daysRemaining !== null ? `${stats.daysRemaining} días` : "—"}
             sub={
-              lastMov && lastMovCfg ? (
-                <p className={cn("text-[11px] font-sans font-semibold", lastMovCfg.signCls)}>
-                  {lastMovCfg.sign}{fmtGal(lastMov.gallons)} · {lastMovCfg.label}
-                </p>
-              ) : (
-                <p className="text-[11px] font-sans text-slate-400">Sin movimientos</p>
-              )
+              <p className="text-[11px] font-sans text-slate-400">
+                Prom. diario: {fmtGal(stats.avgDailyConsumption, 1)}
+              </p>
             }
           />
         </div>
+
+        {/* ── Consumption chart ────────────────────────────────────────────── */}
+        <ConsumptionChart stats={stats} />
 
         {/* ── Filter bar ─────────────────────────────────────────────────── */}
         <div className="flex items-center gap-3 flex-wrap">

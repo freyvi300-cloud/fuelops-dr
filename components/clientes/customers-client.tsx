@@ -7,10 +7,10 @@ import {
   Search, Plus, Bell, ChevronDown, Users, Droplets,
   DollarSign, Tag, Pencil, Eye, MoreHorizontal,
   Ban, CheckCircle2, X, ChevronLeft, ChevronRight,
-  Filter,
+  Filter, Truck, ChevronUp,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { SerializedCustomer, CustomerFormData, CustomerStats } from "@/app/actions/customers"
+import type { SerializedCustomer, CustomerFormData, CustomerStats, FirstTruckData } from "@/app/actions/customers"
 import {
   createCustomer, updateCustomer,
   deactivateCustomer, activateCustomer,
@@ -99,6 +99,16 @@ function KpiCard({
 const INPUT = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-sans text-slate-800 placeholder:text-slate-400 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
 const LABEL = "block text-xs font-medium text-slate-600 mb-1.5"
 
+const TRUCK_TYPES_OPTS = [
+  { value: "TRUCK",     label: "Camión" },
+  { value: "TRAILER",   label: "Tráiler / Remolque" },
+  { value: "EQUIPMENT", label: "Equipo / Maquinaria" },
+  { value: "GENERATOR", label: "Generador" },
+  { value: "OTHER",     label: "Otro" },
+]
+
+const SELECT = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-sans text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all cursor-pointer"
+
 function CustomerForm({
   customer,
   baseFuelPrice,
@@ -117,6 +127,7 @@ function CustomerForm({
   )
   const [fixedPrice,    setFixedPrice]    = useState(customer?.fuelPricePerGallon ?? 0)
   const [discountPct,   setDiscountPct]   = useState(customer?.priceDiscount ?? 0)
+  const [showTruck,     setShowTruck]     = useState(false)
 
   const effectivePrice = priceType === "FIXED"
     ? fixedPrice
@@ -126,6 +137,17 @@ function CustomerForm({
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
     const num = (key: string) => parseFloat(fd.get(key) as string) || 0
+    const truckCode = (fd.get("truckCode") as string)?.trim().toUpperCase()
+    const truckName = (fd.get("truckName") as string)?.trim()
+    let firstTruck: FirstTruckData | null = null
+    if (showTruck && truckCode && truckName) {
+      firstTruck = {
+        code:  truckCode,
+        name:  truckName,
+        plate: (fd.get("truckPlate") as string)?.trim().toUpperCase() || null,
+        type:  (fd.get("truckType") as FirstTruckData["type"]) ?? "TRUCK",
+      }
+    }
     onSubmit({
       name:               fd.get("name") as string,
       phone:              (fd.get("phone") as string)   || null,
@@ -138,6 +160,7 @@ function CustomerForm({
       fuelPricePerGallon: priceType === "FIXED" ? fixedPrice : 0,
       priceDiscount:      priceType === "DISCOUNT_PCT" ? discountPct : 0,
       notes:              (fd.get("notes") as string)   || null,
+      firstTruck,
     })
   }
 
@@ -263,6 +286,66 @@ function CustomerForm({
         <textarea name="notes" rows={2} defaultValue={customer?.notes ?? ""}
           placeholder="Información adicional..." className={cn(INPUT, "resize-none")} />
       </div>
+
+      {/* ── First truck (create only) ────────────────────────── */}
+      {!customer && (
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <button type="button"
+            onClick={() => setShowTruck(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-slate-50/80 hover:bg-slate-100 transition-colors text-left">
+            <div className="flex items-center gap-2.5">
+              <Truck className="w-4 h-4 text-slate-400" />
+              <span className="text-xs font-semibold text-slate-700">
+                Agregar primer camión / rótulo
+              </span>
+              <span className="text-[10px] font-sans text-slate-400">(opcional)</span>
+            </div>
+            {showTruck
+              ? <ChevronUp className="w-4 h-4 text-slate-400" />
+              : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+          {showTruck && (
+            <div className="px-4 py-4 space-y-3 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL}>
+                    Rótulo del camión <span className="text-red-500">*</span>
+                  </label>
+                  <input name="truckCode" required={showTruck}
+                    placeholder="H211"
+                    className={cn(INPUT, "uppercase font-mono tracking-wider")}
+                    style={{ textTransform: "uppercase" }}
+                  />
+                </div>
+                <div>
+                  <label className={LABEL}>
+                    Nombre / descripción <span className="text-red-500">*</span>
+                  </label>
+                  <input name="truckName" required={showTruck}
+                    placeholder="Ej: Volvo blanco 6 ruedas" className={INPUT} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL}>Placa</label>
+                  <input name="truckPlate"
+                    placeholder="A-12345"
+                    className={cn(INPUT, "uppercase")}
+                    style={{ textTransform: "uppercase" }} />
+                </div>
+                <div>
+                  <label className={LABEL}>Tipo</label>
+                  <select name="truckType" defaultValue="TRUCK" className={SELECT}>
+                    {TRUCK_TYPES_OPTS.map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
         <button type="button" onClick={onCancel}

@@ -8,6 +8,13 @@ import { getSystemSettings } from "@/lib/system-settings"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface FirstTruckData {
+  code: string
+  name: string
+  plate?: string | null
+  type: "TRUCK" | "TRAILER" | "EQUIPMENT" | "GENERATOR" | "OTHER"
+}
+
 export interface CustomerFormData {
   name: string
   phone?: string | null
@@ -20,6 +27,7 @@ export interface CustomerFormData {
   fuelPricePerGallon?: number
   priceDiscount?: number
   notes?: string | null
+  firstTruck?: FirstTruckData | null
 }
 
 export interface SerializedCustomer {
@@ -152,23 +160,41 @@ export async function getCustomerStats(): Promise<CustomerStats> {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export async function createCustomer(data: CustomerFormData) {
-  await prisma.customer.create({
-    data: {
-      name:               data.name.trim(),
-      phone:              data.phone?.trim()   || null,
-      email:              data.email?.trim()   || null,
-      address:            data.address?.trim() || null,
-      rnc:                data.rnc?.trim()     || null,
-      creditLimit:        data.creditLimit        ?? 0,
-      pendingGallons:     data.pendingGallons     ?? 0,
-      priceType:          (data.priceType ?? "FIXED") as CustomerPriceType,
-      fuelPricePerGallon: data.fuelPricePerGallon ?? 0,
-      priceDiscount:      data.priceDiscount      ?? 0,
-      notes:              data.notes?.trim()   || null,
-    },
-  })
+  const customerData = {
+    name:               data.name.trim(),
+    phone:              data.phone?.trim()   || null,
+    email:              data.email?.trim()   || null,
+    address:            data.address?.trim() || null,
+    rnc:                data.rnc?.trim()     || null,
+    creditLimit:        data.creditLimit        ?? 0,
+    pendingGallons:     data.pendingGallons     ?? 0,
+    priceType:          (data.priceType ?? "FIXED") as CustomerPriceType,
+    fuelPricePerGallon: data.fuelPricePerGallon ?? 0,
+    priceDiscount:      data.priceDiscount      ?? 0,
+    notes:              data.notes?.trim()   || null,
+  }
+
+  if (data.firstTruck) {
+    const truck = data.firstTruck
+    await prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.create({ data: customerData })
+      await tx.truck.create({
+        data: {
+          customerId: customer.id,
+          code:       truck.code.trim().toUpperCase(),
+          name:       truck.name.trim(),
+          plate:      truck.plate?.trim().toUpperCase() || null,
+          type:       truck.type,
+        },
+      })
+    })
+  } else {
+    await prisma.customer.create({ data: customerData })
+  }
+
   revalidatePath("/clientes")
   revalidatePath("/suministro")
+  revalidatePath("/camiones")
 }
 
 export async function updateCustomer(id: string, data: CustomerFormData) {

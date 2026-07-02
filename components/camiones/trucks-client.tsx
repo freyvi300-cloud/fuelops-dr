@@ -254,16 +254,16 @@ function TruckForm({ truck, customers, nextCode, onSubmit, onCancel, isPending, 
         )}
       </div>
 
-      {/* Código + Nombre */}
+      {/* Rótulo + Nombre */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className={LABEL}>
-            Código <span className="text-red-500">*</span>
+            Rótulo del camión <span className="text-red-500">*</span>
             <span className="ml-1.5 text-slate-400 font-normal normal-case">(único)</span>
           </label>
           <input name="code" required
             defaultValue={truck?.code ?? nextCode}
-            placeholder="H001"
+            placeholder="H211"
             className={cn(INPUT, "uppercase font-mono tracking-wider")}
             style={{ textTransform: "uppercase" }}
           />
@@ -472,7 +472,7 @@ export default function TrucksClient({ trucks, stats, customers, nextCode, initi
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input type="text" value={search}
               onChange={e => { setSearch(e.target.value); setPage(1) }}
-              placeholder="Buscar por código, nombre, placa o cliente..."
+              placeholder="Buscar por rótulo, nombre, placa o cliente..."
               className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-sans text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
               style={{ boxShadow: "var(--shadow-card)" }}
             />
@@ -531,7 +531,7 @@ export default function TrucksClient({ trucks, stats, customers, nextCode, initi
                 <table className="w-full font-sans text-sm min-w-[750px]">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/70">
-                      {["CÓDIGO","NOMBRE / DESCRIPCIÓN","CLIENTE","TIPO","PLACA","ESTADO","ACCIONES"].map((h, i) => (
+                      {["RÓTULO","NOMBRE / DESCRIPCIÓN","CLIENTE","TIPO","PLACA","ESTADO","ACCIONES"].map((h, i) => (
                         <th key={h} className={cn(
                           "text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3.5",
                           i === 0 ? "text-left pl-5 pr-4" :
@@ -547,7 +547,7 @@ export default function TrucksClient({ trucks, stats, customers, nextCode, initi
                       const TypeIcon = TRUCK_TYPE_ICONS[t.type] ?? Truck
                       return (
                         <tr key={t.id} className="hover:bg-slate-50/50 transition-colors group">
-                          {/* Código */}
+                          {/* Rótulo */}
                           <td className="pl-5 pr-4 py-4">
                             <CodeBadge code={t.code} />
                           </td>
@@ -666,7 +666,7 @@ export default function TrucksClient({ trucks, stats, customers, nextCode, initi
                 </h2>
                 {!editing && (
                   <p className="text-[11px] font-sans text-slate-400 mt-0.5">
-                    El código se genera automáticamente y puede editarse.
+                    El rótulo se genera automáticamente y puede editarse.
                   </p>
                 )}
               </div>

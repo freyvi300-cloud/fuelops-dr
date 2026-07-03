@@ -14,6 +14,7 @@ import {
 } from "recharts"
 import { cn }           from "@/lib/utils"
 import type { FullReport, Period } from "@/lib/reporting"
+import WeeklyReportClient from "./weekly-report-client"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -461,10 +462,12 @@ type TabId = typeof TABS[number]["id"]
 interface Props {
   report:       FullReport
   activePeriod: Period
+  customers:    { id: string; name: string }[]
 }
 
-export default function ReportsClient({ report, activePeriod }: Props) {
+export default function ReportsClient({ report, activePeriod, customers }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("ventas")
+  const [view, setView] = useState<"dashboard" | "weekly">("dashboard")
   const { kpis, dateRange } = report
 
   return (
@@ -473,39 +476,46 @@ export default function ReportsClient({ report, activePeriod }: Props) {
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
       <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-start gap-4">
+        <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Reportes</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
-              Motor centralizado — toda la lógica vive en{" "}
-              <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-600">lib/reporting.ts</code>
+              {view === "weekly" ? "Reportes semanales por cliente — exporta en PDF, Excel o PNG" : "Métricas y análisis del negocio"}
             </p>
           </div>
 
-          <button className="relative p-2 hover:bg-slate-50 rounded-xl transition-colors shrink-0">
-            <Bell className="w-5 h-5 text-slate-500" />
-            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center font-bold">3</span>
-          </button>
-
-          <button className="flex items-center gap-2 hover:bg-slate-50 rounded-xl px-2.5 py-2 transition-colors shrink-0">
-            <div className="w-8 h-8 bg-[#1a3fa0] rounded-full flex items-center justify-center">
-              <span className="text-white text-sm font-bold">A</span>
-            </div>
-            <span className="text-sm font-semibold text-slate-800 hidden lg:block">Administrador</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 hidden lg:block" />
-          </button>
-
-          {/* Export button — placeholder */}
-          <button disabled title="Exportación disponible en Fase 2"
-            className="flex items-center gap-2 bg-slate-100 text-slate-400 text-sm font-semibold px-4 py-2.5 rounded-xl cursor-not-allowed shrink-0">
-            <FileDown className="w-4 h-4" />
-            Exportar
-          </button>
+          {/* View toggle */}
+          <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-0.5 shrink-0">
+            <button
+              onClick={() => setView("dashboard")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                view === "dashboard" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}>
+              <BarChart3 className="w-3.5 h-3.5" />
+              Dashboard
+            </button>
+            <button
+              onClick={() => setView("weekly")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                view === "weekly" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}>
+              <FileDown className="w-3.5 h-3.5" />
+              Reportes semanales
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ══ BODY ═════════════════════════════════════════════════════════════ */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+        {/* ── Weekly report view ──────────────────────────────────────────── */}
+        {view === "weekly" && <WeeklyReportClient customers={customers} />}
+
+        {/* ── Dashboard view ──────────────────────────────────────────────── */}
+        {view === "dashboard" && <>
 
         {/* Period filter + date label */}
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -586,12 +596,13 @@ export default function ReportsClient({ report, activePeriod }: Props) {
         <div className="flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl">
           <BarChart3 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
           <p className="text-xs font-sans text-blue-700 leading-relaxed">
-            <span className="font-bold">Arquitectura preparada:</span>{" "}
-            Todos los cálculos viven en <code className="bg-blue-100 px-1.5 rounded font-mono text-[11px]">lib/reporting.ts</code> y son reutilizados
-            por el Dashboard, esta página, y los futuros resúmenes por email (diario / semanal / mensual).
-            La exportación PDF/Excel/CSV está preparada como interfaz — se implementa en Fase 2.
+            <span className="font-bold">Reportes semanales:</span>{" "}
+            Usa la pestaña <strong>Reportes semanales</strong> para generar y exportar reportes por cliente
+            en PDF, Excel o PNG — uno por cliente o todos en ZIP.
           </p>
         </div>
+
+        </>}
       </div>
     </div>
   )

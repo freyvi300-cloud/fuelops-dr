@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useRouter }    from "next/navigation"
 import { useState }     from "react"
@@ -107,7 +107,7 @@ function ChartCard({ title, icon: Icon, children, empty }: {
   title: string; icon: React.ElementType; children: React.ReactNode; empty?: boolean
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 p-5"
+    <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 p-5"
       style={{ boxShadow: "var(--shadow-card)" }}>
       <div className="flex items-center gap-2 mb-4">
         <Icon className="w-4 h-4 text-blue-600" />
@@ -216,7 +216,7 @@ function CollectionsTab({ report }: { report: FullReport }) {
 
       {/* By method breakdown */}
       {collections.byMethod.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-100 p-5" style={{ boxShadow: "var(--shadow-card)" }}>
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 p-5" style={{ boxShadow: "var(--shadow-card)" }}>
           <h3 className="font-bold text-slate-800 text-sm mb-4">Cobros por método de pago</h3>
           <div className="space-y-3">
             {collections.byMethod.map(m => {
@@ -294,7 +294,7 @@ function CustomersTab({ report }: { report: FullReport }) {
   const { customerDebt } = report
   if (customerDebt.length === 0) {
     return (
-      <div className="bg-white rounded-2xl border border-slate-100 py-16 flex flex-col items-center gap-3"
+      <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 py-16 flex flex-col items-center gap-3"
         style={{ boxShadow: "var(--shadow-card)" }}>
         <CheckCircle2 className="w-10 h-10 text-emerald-400" />
         <p className="font-semibold text-slate-700">No hay clientes con saldo pendiente</p>
@@ -303,13 +303,13 @@ function CustomersTab({ report }: { report: FullReport }) {
     )
   }
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
+    <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
       <div className="overflow-x-auto">
         <table className="w-full font-sans text-sm">
           <thead>
-            <tr className="border-b border-slate-100 bg-slate-50/70">
+            <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/70 dark:bg-slate-800/80">
               {["#","CLIENTE","TELÉFONO","BALANCE (RD$)","GALONES PEND.","FACT. VENCIDAS","ÚLTIMO SUMINISTRO"].map((h, i) => (
-                <th key={h} className={cn("text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3",
+                <th key={h} className={cn("text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider py-3",
                   i === 0 ? "pl-5 pr-2 text-center w-10" : i >= 3 ? "text-right px-4" : "text-left px-4")}>
                   {h}
                 </th>
@@ -318,11 +318,11 @@ function CustomersTab({ report }: { report: FullReport }) {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {customerDebt.map((c, i) => (
-              <tr key={c.customerId} className="hover:bg-slate-50/50 transition-colors">
+              <tr key={c.customerId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                 <td className="pl-5 pr-2 py-3 text-center">
                   <span className="text-[11px] font-bold text-slate-400">{i + 1}</span>
                 </td>
-                <td className="px-4 py-3 font-semibold text-slate-800">{c.customerName}</td>
+                <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">{c.customerName}</td>
                 <td className="px-4 py-3 text-slate-500 font-sans">{c.customerPhone ?? "—"}</td>
                 <td className="px-4 py-3 text-right font-bold text-red-600">{fmtRD(c.currentBalance)}</td>
                 <td className="px-4 py-3 text-right text-blue-600 font-semibold">{fmtGal(c.pendingGallons)}</td>
@@ -338,7 +338,7 @@ function CustomersTab({ report }: { report: FullReport }) {
               </tr>
             ))}
           </tbody>
-          <tfoot className="border-t-2 border-slate-200 bg-slate-50">
+          <tfoot className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60">
             <tr>
               <td colSpan={3} className="pl-5 py-3 text-xs font-bold text-slate-600 uppercase tracking-wider">
                 TOTALES ({customerDebt.length} clientes)
@@ -401,7 +401,7 @@ function TrucksTab({ report }: { report: FullReport }) {
   const { truckActivity } = report
   if (truckActivity.length === 0) {
     return (
-      <div className="bg-white rounded-2xl border border-slate-100 py-16 flex flex-col items-center gap-3"
+      <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 py-16 flex flex-col items-center gap-3"
         style={{ boxShadow: "var(--shadow-card)" }}>
         <Truck className="w-10 h-10 text-slate-300" />
         <p className="font-semibold text-slate-700">Sin actividad de camiones para este período</p>
@@ -410,13 +410,13 @@ function TrucksTab({ report }: { report: FullReport }) {
     )
   }
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
+    <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden" style={{ boxShadow: "var(--shadow-card)" }}>
       <div className="overflow-x-auto">
         <table className="w-full font-sans text-sm">
           <thead>
-            <tr className="border-b border-slate-100 bg-slate-50/70">
+            <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/70 dark:bg-slate-800/80">
               {["CÓDIGO","NOMBRE","CLIENTE","SUMINISTROS","GALONES TOTALES","ÚLTIMO SUMINISTRO"].map((h, i) => (
-                <th key={h} className={cn("text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3",
+                <th key={h} className={cn("text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider py-3",
                   i === 0 ? "pl-5 pr-4 text-left" : i >= 3 ? "text-right px-4" : "text-left px-4")}>
                   {h}
                 </th>
@@ -425,15 +425,15 @@ function TrucksTab({ report }: { report: FullReport }) {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {truckActivity.map(t => (
-              <tr key={t.truckId} className="hover:bg-slate-50/50 transition-colors">
+              <tr key={t.truckId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                 <td className="pl-5 pr-4 py-3">
                   <span className="bg-[#1a3fa0] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg tracking-widest font-mono">
                     {t.truckCode}
                   </span>
                 </td>
-                <td className="px-4 py-3 font-semibold text-slate-800">{t.truckName}</td>
-                <td className="px-4 py-3 text-slate-500 truncate max-w-[140px]">{t.customerName}</td>
-                <td className="px-4 py-3 text-right font-semibold text-slate-700">{t.supplyCount}</td>
+                <td className="px-4 py-3 font-semibold text-slate-800 dark:text-slate-100">{t.truckName}</td>
+                <td className="px-4 py-3 text-slate-500 dark:text-slate-400 truncate max-w-[140px]">{t.customerName}</td>
+                <td className="px-4 py-3 text-right font-semibold text-slate-700 dark:text-slate-200">{t.supplyCount}</td>
                 <td className="px-4 py-3 text-right font-bold text-blue-600">{fmtGal(t.totalGallons)}</td>
                 <td className="px-4 py-3 text-right text-slate-500 font-sans">
                   {t.lastSupplyDate ? fmtDateFull(t.lastSupplyDate) : "—"}
@@ -471,26 +471,26 @@ export default function ReportsClient({ report, activePeriod, customers }: Props
   const { kpis, dateRange } = report
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
-      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Reportes</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Reportes</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
               {view === "weekly" ? "Reportes semanales por cliente — exporta en PDF, Excel o PNG" : "Métricas y análisis del negocio"}
             </p>
           </div>
 
           {/* View toggle */}
-          <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-0.5 shrink-0">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 gap-0.5 shrink-0">
             <button
               onClick={() => setView("dashboard")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
-                view === "dashboard" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                view === "dashboard" ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               )}>
               <BarChart3 className="w-3.5 h-3.5" />
               Dashboard
@@ -499,7 +499,7 @@ export default function ReportsClient({ report, activePeriod, customers }: Props
               onClick={() => setView("weekly")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
-                view === "weekly" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                view === "weekly" ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               )}>
               <FileDown className="w-3.5 h-3.5" />
               Reportes semanales
@@ -556,7 +556,7 @@ export default function ReportsClient({ report, activePeriod, customers }: Props
         </div>
 
         {/* ── Report tabs ─────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden"
           style={{ boxShadow: "var(--shadow-card)" }}>
           {/* Tab bar */}
           <div className="flex items-center border-b border-slate-100 px-2 overflow-x-auto">

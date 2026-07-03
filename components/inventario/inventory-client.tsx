@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
@@ -418,14 +418,14 @@ export default function InventoryClient({ movements, stats }: Props) {
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
-      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
         <div className="flex items-start gap-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Inventario</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Inventario</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
               Control del combustible disponible y movimientos del tanque.
             </p>
@@ -574,7 +574,7 @@ export default function InventoryClient({ movements, stats }: Props) {
         </div>
 
         {/* ── Table / Empty state ─────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden"
           style={{ boxShadow: "var(--shadow-card)" }}>
 
           {filtered.length === 0 ? (
@@ -603,7 +603,7 @@ export default function InventoryClient({ movements, stats }: Props) {
               <div className="overflow-x-auto">
                 <table className="w-full font-sans text-sm min-w-[700px]">
                   <thead>
-                    <tr className="border-b border-slate-100 bg-slate-50/70">
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/70 dark:bg-slate-800/80">
                       {[
                         { label: "FECHA",         cls: "text-left pl-5 pr-4" },
                         { label: "TIPO",           cls: "text-left px-4" },
@@ -613,7 +613,7 @@ export default function InventoryClient({ movements, stats }: Props) {
                         { label: "ACCIONES",       cls: "text-center px-5 w-16" },
                       ].map(h => (
                         <th key={h.label}
-                          className={cn("text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3.5", h.cls)}>
+                          className={cn("text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider py-3.5", h.cls)}>
                           {h.label}
                         </th>
                       ))}
@@ -625,10 +625,10 @@ export default function InventoryClient({ movements, stats }: Props) {
                       const isOut = m.type === "OUT"
                       const displayGallons = isOut ? -m.gallons : m.gallons
                       return (
-                        <tr key={m.id} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                           {/* Fecha */}
                           <td className="pl-5 pr-4 py-4">
-                            <p className="font-medium text-slate-800">{fmtDate(m.movedAt)}</p>
+                            <p className="font-medium text-slate-800 dark:text-slate-100">{fmtDate(m.movedAt)}</p>
                             <p className="text-[11px] text-slate-400 mt-0.5 font-sans">
                               {new Date(m.movedAt).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })}
                             </p>
@@ -685,7 +685,7 @@ export default function InventoryClient({ movements, stats }: Props) {
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 bg-slate-50/50">
+              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50">
                 <p className="text-xs font-sans text-slate-500">
                   Mostrando{" "}
                   <span className="font-semibold text-slate-700">{(safePage - 1) * ITEMS_PER_PAGE + 1}</span>

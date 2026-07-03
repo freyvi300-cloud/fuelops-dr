@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
@@ -425,17 +425,17 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
   const statusLabels: Record<string, string> = { ALL: "Todos", ACTIVE: "Activos", INACTIVE: "Inactivos" }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ═══════════════════════════════════════════════════════════════════
           PAGE HEADER
       ═══════════════════════════════════════════════════════════════════ */}
-      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
         <div className="flex items-start gap-4">
           {/* Title */}
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Clientes</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Clientes</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
               Administra tus clientes y consulta sus saldos de combustible.
             </p>
@@ -579,7 +579,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
         </div>
 
         {/* ── Table card ──────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden"
           style={{ boxShadow: "var(--shadow-card)" }}>
 
           {filtered.length === 0 ? (
@@ -610,10 +610,10 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
               <div className="overflow-x-auto">
                 <table className="w-full font-sans text-sm min-w-[800px]">
                   <thead>
-                    <tr className="border-b border-slate-100 bg-slate-50/70">
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/70 dark:bg-slate-800/80">
                       {["CLIENTE","TELÉFONO","GALONES PENDIENTES","PRECIO / GAL","TOTAL PENDIENTE","ESTADO","ACCIONES"].map((h, i) => (
                         <th key={h} className={cn(
-                          "text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3.5",
+                          "text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider py-3.5",
                           i === 0 ? "text-left pl-5 pr-4" :
                           i === 6 ? "text-center px-5" :
                           i >= 2 && i <= 4 ? "text-right px-4" : "text-left px-4"
@@ -627,7 +627,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
                     {paginated.map((c) => {
                       const color = avatarColor(c.name)
                       return (
-                        <tr key={c.id} className="hover:bg-slate-50/50 transition-colors group">
+                        <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors group">
                           {/* Cliente */}
                           <td className="pl-5 pr-4 py-4">
                             <div className="flex items-center gap-3">
@@ -635,7 +635,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
                                 {c.name.charAt(0).toUpperCase()}
                               </div>
                               <div className="min-w-0">
-                                <p className="font-semibold text-slate-800 truncate max-w-[180px]">{c.name}</p>
+                                <p className="font-semibold text-slate-800 dark:text-slate-100 truncate max-w-[180px]">{c.name}</p>
                                 {c.rnc && (
                                   <p className="text-[11px] text-slate-400 mt-0.5">RNC: {c.rnc}</p>
                                 )}
@@ -644,7 +644,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
                           </td>
 
                           {/* Teléfono */}
-                          <td className="px-4 py-4 text-slate-500">
+                          <td className="px-4 py-4 text-slate-500 dark:text-slate-400">
                             {c.phone ?? <span className="text-slate-300">—</span>}
                           </td>
 
@@ -734,7 +734,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
               </div>
 
               {/* ── Table footer ─────────────────────────────────────────── */}
-              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 bg-slate-50/50">
+              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50">
                 {/* Count */}
                 <p className="text-xs font-sans text-slate-500">
                   Mostrando{" "}

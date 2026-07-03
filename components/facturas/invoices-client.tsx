@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useTransition } from "react"
 import { useRouter }               from "next/navigation"
@@ -198,7 +198,7 @@ function InvoiceDetailModal({
             <div className="px-4 py-3">
               <div className="grid grid-cols-12 text-sm">
                 <div className="col-span-5">
-                  <p className="font-semibold text-slate-800">Diésel — suministro</p>
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">Diésel — suministro</p>
                   <p className="text-[11px] font-sans text-slate-400 mt-0.5">
                     {detail.paymentType === "CREDIT" ? "Crédito" : "Contado"}
                   </p>
@@ -356,15 +356,15 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+    <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
-      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
         <div className="flex items-start gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Facturas</h1>
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Facturas</h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
                 Auto-generadas
               </span>
@@ -445,7 +445,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
         </div>
 
         {/* ── Table ──────────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden"
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden"
           style={{ boxShadow: "var(--shadow-card)" }}>
 
           {filtered.length === 0 ? (
@@ -467,7 +467,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
               <div className="overflow-x-auto">
                 <table className="w-full font-sans text-sm min-w-[780px]">
                   <thead>
-                    <tr className="border-b border-slate-100 bg-slate-50/70">
+                    <tr className="border-b border-slate-100 dark:border-slate-700/50 bg-slate-50/70 dark:bg-slate-800/80">
                       {[
                         { h: "NÚMERO",    cls: "text-left pl-5 pr-4" },
                         { h: "CLIENTE",   cls: "text-left px-4" },
@@ -478,7 +478,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
                         { h: "PENDIENTE", cls: "text-right px-4" },
                         { h: "ACCIONES",  cls: "text-center px-5 w-20" },
                       ].map(col => (
-                        <th key={col.h} className={cn("text-[11px] font-semibold text-slate-500 uppercase tracking-wider py-3.5", col.cls)}>
+                        <th key={col.h} className={cn("text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider py-3.5", col.cls)}>
                           {col.h}
                         </th>
                       ))}
@@ -486,7 +486,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {paginated.map(inv => (
-                      <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={inv.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                         {/* Número */}
                         <td className="pl-5 pr-4 py-4">
                           <span className="font-mono text-xs font-bold text-[#1a3fa0] bg-blue-50 px-2.5 py-1 rounded-lg tracking-wider">
@@ -496,7 +496,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
 
                         {/* Cliente */}
                         <td className="px-4 py-4">
-                          <p className="font-semibold text-slate-800 truncate max-w-[160px]">{inv.customerName}</p>
+                          <p className="font-semibold text-slate-800 dark:text-slate-100 truncate max-w-[160px]">{inv.customerName}</p>
                           {inv.customerPhone && <p className="text-[11px] text-slate-400 mt-0.5">{inv.customerPhone}</p>}
                         </td>
 
@@ -525,7 +525,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
                         </td>
 
                         {/* Total */}
-                        <td className="px-4 py-4 text-right font-semibold text-slate-800">
+                        <td className="px-4 py-4 text-right font-semibold text-slate-800 dark:text-slate-100">
                           {fmtRD(inv.total)}
                         </td>
 
@@ -557,7 +557,7 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 bg-slate-50/50 flex-wrap gap-3">
+              <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-900/50 flex-wrap gap-3">
                 <p className="text-xs font-sans text-slate-500">
                   Mostrando{" "}
                   <span className="font-semibold text-slate-700">{(safePage - 1) * ITEMS_PER_PAGE + 1}</span>

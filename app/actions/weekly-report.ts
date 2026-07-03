@@ -35,10 +35,10 @@ export interface WeeklyCustomerReport {
 }
 
 export interface WeeklyReportResult {
-  weekStart:       string
-  weekEnd:         string
-  weekLabel:       string
-  weekNumber:      number
+  dateFrom:        string
+  dateTo:          string
+  periodLabel:     string
+  weekNumber:      number | null
   businessName:    string
   businessPhone:   string | null
   businessAddress: string | null
@@ -48,33 +48,32 @@ export interface WeeklyReportResult {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoWeekNumber(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const d   = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
   const day = d.getUTCDay() || 7
   d.setUTCDate(d.getUTCDate() + 4 - day)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7)
 }
 
-function fmtShort(d: Date) {
-  return d.toLocaleDateString("es-DO", { day: "2-digit", month: "long" })
-}
-function fmtFull(d: Date) {
-  return d.toLocaleDateString("es-DO", { day: "2-digit", month: "long", year: "numeric" })
+function fmtLocal(d: Date) {
+  return d.toLocaleDateString("es-DO", { day: "2-digit", month: "long", year: "numeric", timeZone: "UTC" })
 }
 
 // ─── Main action ──────────────────────────────────────────────────────────────
 
 export async function getWeeklyReportData(
-  weekStartISO: string,
-  customerId:   string | "all",
+  dateFromISO: string,
+  dateToISO:   string,
+  customerId:  string | "all",
 ): Promise<WeeklyReportResult> {
-  // Parse the week range (weekStartISO = "YYYY-MM-DD")
-  const weekStart = new Date(weekStartISO + "T00:00:00.000Z")
-  const weekEnd   = new Date(weekStart)
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
+  const dateFrom = new Date(dateFromISO + "T00:00:00.000Z")
+  const dateTo   = new Date(dateToISO   + "T23:59:59.999Z")
 
-  const weekNumber = isoWeekNumber(weekStart)
-  const weekLabel  = `Semana del ${fmtShort(weekStart)} al ${fmtFull(new Date(weekEnd.getTime() - 1))}`
+  // Show week number only when range is exactly 7 days (Mon–Sun)
+  const diffDays = Math.round((dateTo.getTime() - dateFrom.getTime()) / 86_400_000)
+  const weekNumber = diffDays === 6 ? isoWeekNumber(dateFrom) : null
+
+  const periodLabel = `${fmtLocal(dateFrom)} al ${fmtLocal(dateTo)}`
 
   const settings = await getSystemSettings()
 
@@ -87,7 +86,7 @@ export async function getWeeklyReportData(
     select: {
       id: true, name: true, phone: true, address: true, rnc: true, currentBalance: true,
       supplies: {
-        where: { suppliedAt: { gte: weekStart, lt: weekEnd } },
+        where: { suppliedAt: { gte: dateFrom, lte: dateTo } },
         include: {
           truck:   { select: { code: true, name: true } },
           invoice: { select: { invoiceNumber: true } },
@@ -114,7 +113,7 @@ export async function getWeeklyReportData(
       }))
 
       const totalGallons = supplies.reduce((a, s) => a + s.gallons, 0)
-      const totalBilled  = supplies.reduce((a, s) => a + s.total, 0)
+      const totalBilled  = supplies.reduce((a, s) => a + s.total,   0)
 
       return {
         customer: {
@@ -126,18 +125,14 @@ export async function getWeeklyReportData(
           currentBalance: Number(c.currentBalance),
         },
         supplies,
-        totals: {
-          totalGallons,
-          totalBilled,
-          balanceDue: Number(c.currentBalance),
-        },
+        totals: { totalGallons, totalBilled, balanceDue: Number(c.currentBalance) },
       }
     })
 
   return {
-    weekStart:       weekStart.toISOString(),
-    weekEnd:         weekEnd.toISOString(),
-    weekLabel,
+    dateFrom:        dateFrom.toISOString(),
+    dateTo:          dateTo.toISOString(),
+    periodLabel,
     weekNumber,
     businessName:    settings.businessName,
     businessPhone:   settings.phone,

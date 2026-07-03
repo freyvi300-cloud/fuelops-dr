@@ -187,6 +187,8 @@ interface CaptionResolved {
   pricePerGallon: number
   /** true when the match was fuzzy and needs user confirmation */
   needsConfirm?:  boolean
+  /** true when truckCode was specified but no truck with that code exists for this customer */
+  truckNotFound?: boolean
 }
 
 /**
@@ -238,7 +240,11 @@ async function resolveCaption(
       },
       settings.defaultFuelPrice,
     )
-    return { customerId: c.id, customerName: c.name, truckId: truck?.id ?? null, truckName: truck ? `${truck.code} · ${truck.name}` : null, pricePerGallon }
+    const truckNotFound = truckCode !== null && truck === null
+    if (truckNotFound) {
+      console.log(`[resolveCaption] truckNotFound=true — truckCode="${truckCode}" not found for customer "${c.name}"`)
+    }
+    return { customerId: c.id, customerName: c.name, truckId: truck?.id ?? null, truckName: truck ? `${truck.code} · ${truck.name}` : null, pricePerGallon, truckNotFound }
   }
 
   // 2. No exact match or ambiguous — try fuzzy word-overlap against ALL customers
@@ -287,7 +293,8 @@ async function resolveCaption(
     truckId:       truck?.id ?? null,
     truckName:     truck ? `${truck.code} · ${truck.name}` : null,
     pricePerGallon,
-    needsConfirm:  score < 1.0,   // fuzzy match → ask user to confirm
+    needsConfirm:  score < 1.0,
+    truckNotFound: truckCode !== null && truck === null,
   }
 }
 
@@ -503,7 +510,20 @@ async function handleMeterImage(
 
   console.log(`[Nova/Caption] resolved=${resolved ? "YES" : "NULL"} parsed.paymentType=${parsed.paymentType}`)
 
-  if (resolved && resolved.needsConfirm) {
+  if (resolved && parsed.truckCode && resolved.truckNotFound) {
+    // ── BLOCKED: customer found but truck not registered for them ─────────
+    console.log(`[Nova/Caption] → BLOCKED: customer "${resolved.customerName}" found but truck "${parsed.truckCode}" not registered for them`)
+    await sendTextMessage(msg.from,
+      `⚠️ *Rótulo no encontrado*\n\n` +
+      `Encontré el cliente *${resolved.customerName}*, pero el rótulo *${parsed.truckCode}* no está registrado para ese cliente.\n\n` +
+      `Opciones:\n` +
+      `• Ve a *Camiones* en la app y registra el rótulo *${parsed.truckCode}* para *${resolved.customerName}*\n` +
+      `• O envía la foto de nuevo con el rótulo correcto\n\n` +
+      `_No se registró ningún suministro._`
+    )
+    return
+
+  } else if (resolved && resolved.needsConfirm) {
     // ── FUZZY MATCH: ask user to confirm before proceeding ────────────────
     console.log(`[Nova/Caption] → WAITING_CAPTION_CONFIRM (fuzzy match, needs confirmation)`)
     const payload: FlowPayload = {

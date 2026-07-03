@@ -231,16 +231,43 @@ async function downloadExcel(report: WeeklyCustomerReport, meta: WeeklyReportRes
 }
 
 // ─── Export: PNG ──────────────────────────────────────────────────────────────
+//
+// We use html-to-image (SVG foreignObject approach) instead of html2canvas.
+//
+// Root cause of html2canvas failure: the app loads Inter + Plus Jakarta Sans via
+// next/font/google, which injects @font-face rules into the page CSS. html2canvas
+// fetches ALL @font-face URLs it finds in the document (not just fonts used by the
+// target element). Those fetches hit a browser security restriction and taint the
+// canvas — toDataURL() then throws SecurityError.
+//
+// html-to-image avoids this: it inlines font data as data URIs inside an SVG
+// foreignObject and never touches the canvas taint mechanism.
+//
+// Known quirk: first call may render fonts before they're fully inlined into the SVG.
+// Calling toPng twice ensures the second capture has all resources ready.
 
 async function downloadPNG(el: HTMLDivElement, report: WeeklyCustomerReport, meta: WeeklyReportResult) {
-  const { default: html2canvas } = await import("html2canvas")
-  const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" })
-  const slug   = report.customer.name.replace(/\s+/g, "_")
-  const a      = Object.assign(document.createElement("a"), {
-    href:     canvas.toDataURL("image/png"),
+  const { toPng } = await import("html-to-image")
+
+  const opts = {
+    quality:          1,
+    pixelRatio:       2,
+    backgroundColor:  "#ffffff",
+    cacheBust:        true,
+  } as const
+
+  // First call warms up font inlining; second call is the actual capture.
+  await toPng(el, opts)
+  const dataUrl = await toPng(el, opts)
+
+  const slug = report.customer.name.replace(/\s+/g, "_")
+  const a    = Object.assign(document.createElement("a"), {
+    href:     dataUrl,
     download: `Reporte_${slug}_${meta.dateFrom.slice(0, 10)}_${meta.dateTo.slice(0, 10)}.png`,
   })
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
 }
 
 // ─── Export: ZIP ──────────────────────────────────────────────────────────────

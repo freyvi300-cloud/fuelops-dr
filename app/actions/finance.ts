@@ -47,6 +47,36 @@ export interface RecentPayment {
   paymentDate:   string
 }
 
+// ─── Bank types ───────────────────────────────────────────────────────────────
+
+export interface BankPayment {
+  id:            string
+  paymentNumber: string
+  customerName:  string
+  amount:        number
+  reference:     string | null
+  notes:         string | null
+  paymentDate:   string
+  method:        string
+}
+
+export interface BankDayFlow {
+  dateLabel: string
+  dateISO:   string
+  amount:    number
+}
+
+export interface BankSummary {
+  bankName:     string
+  totalAmount:  number
+  paymentCount: number
+  avgPayment:   number
+  customers:    string[]
+  topCustomer:  { name: string; amount: number } | null
+  dailyFlow:    BankDayFlow[]
+  payments:     BankPayment[]
+}
+
 export interface FinanceDashboardResult {
   kpis: {
     totalIncome:     number
@@ -58,6 +88,7 @@ export interface FinanceDashboardResult {
     customersServed: number
   }
   byMethod:       MethodBreakdown[]
+  byBank:         BankSummary[]
   dailyFlow:      DayFlow[]
   receivables:    ReceivableRow[]
   topByPurchase:  TopCustomer[]
@@ -67,7 +98,9 @@ export interface FinanceDashboardResult {
   periodLabel:    string
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+import { detectBank } from "@/lib/bank-detection"
+
+// ─── Method labels ────────────────────────────────────────────────────────────
 
 const METHOD_LABELS: Record<string, string> = {
   CASH:         "Efectivo",
@@ -167,6 +200,71 @@ export async function getFinancialDashboard(
       pct:    totalIncome > 0 ? (d.amount / totalIncome) * 100 : 0,
     }))
     .sort((a, b) => b.amount - a.amount)
+
+  // ── By bank ───────────────────────────────────────────────────────────────
+
+  const bankPaymentsMap = new Map<string, { payments: typeof rawPayments; dayMap: Map<string, number> }>()
+
+  for (const p of rawPayments) {
+    const bank = detectBank(p.paymentMethod as string, p.reference, p.notes)
+    if (!bankPaymentsMap.has(bank)) {
+      bankPaymentsMap.set(bank, { payments: [], dayMap: new Map() })
+    }
+    const entry = bankPaymentsMap.get(bank)!
+    entry.payments.push(p)
+    const iso = p.paymentDate.toISOString().slice(0, 10)
+    entry.dayMap.set(iso, (entry.dayMap.get(iso) ?? 0) + p.amount.toNumber())
+  }
+
+  const byBank: BankSummary[] = Array.from(bankPaymentsMap.entries())
+    .map(([bankName, { payments, dayMap }]) => {
+      const totalAmount = payments.reduce((s, p) => s + p.amount.toNumber(), 0)
+      const avgPayment  = payments.length > 0 ? totalAmount / payments.length : 0
+
+      // Top customer by amount paid through this bank
+      const custMap = new Map<string, number>()
+      for (const p of payments) {
+        custMap.set(p.customer.name, (custMap.get(p.customer.name) ?? 0) + p.amount.toNumber())
+      }
+      const topEntry = Array.from(custMap.entries()).sort((a, b) => b[1] - a[1])[0]
+      const topCustomer = topEntry ? { name: topEntry[0], amount: topEntry[1] } : null
+
+      // Daily flow (fill every day in range)
+      const dailyFlow: BankDayFlow[] = []
+      const cursor = new Date(from)
+      while (cursor <= to) {
+        const iso = cursor.toISOString().slice(0, 10)
+        dailyFlow.push({
+          dateISO:   iso,
+          dateLabel: cursor.toLocaleDateString("es-DO", { day: "2-digit", month: "short", timeZone: "UTC" }),
+          amount:    dayMap.get(iso) ?? 0,
+        })
+        cursor.setUTCDate(cursor.getUTCDate() + 1)
+      }
+
+      const customers = [...new Set(payments.map(p => p.customer.name))].sort()
+
+      return {
+        bankName,
+        totalAmount,
+        paymentCount: payments.length,
+        avgPayment,
+        topCustomer,
+        customers,
+        dailyFlow,
+        payments: payments.slice(0, 100).map(p => ({
+          id:            p.id,
+          paymentNumber: p.paymentNumber,
+          customerName:  p.customer.name,
+          amount:        p.amount.toNumber(),
+          reference:     p.reference,
+          notes:         p.notes,
+          paymentDate:   p.paymentDate.toISOString(),
+          method:        p.paymentMethod as string,
+        })),
+      }
+    })
+    .sort((a, b) => b.totalAmount - a.totalAmount)
 
   // ── Daily flow ────────────────────────────────────────────────────────────
 
@@ -268,6 +366,7 @@ export async function getFinancialDashboard(
   return {
     kpis: { totalIncome, totalTransfers, totalCash, totalPending, invoicesCount, gallonsSold, customersServed },
     byMethod,
+    byBank,
     dailyFlow,
     receivables,
     topByPurchase,

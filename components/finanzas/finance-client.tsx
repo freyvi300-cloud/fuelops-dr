@@ -1019,7 +1019,7 @@ export default function FinanceClient({ initialData, customers, defaultDateFrom,
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ══ HEADER ══════════════════════════════════════════════════════════ */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-4 sm:px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>

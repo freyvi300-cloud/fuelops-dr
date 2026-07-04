@@ -93,18 +93,18 @@ function KpiCard({
   label: string; value: string; sub?: string; danger?: boolean
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 p-5 flex items-center gap-4"
+    <div className="bg-white rounded-2xl border border-slate-100 p-3 sm:p-5 flex items-center gap-2 sm:gap-4"
       style={{ boxShadow: "0 1px 6px rgba(0,0,0,0.05)" }}>
-      <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
-        <Icon className={cn("w-5 h-5", iconColor)} />
+      <div className={cn("w-9 h-9 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0", iconBg)}>
+        <Icon className={cn("w-4 h-4 sm:w-5 sm:h-5", iconColor)} />
       </div>
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{label}</p>
+      <div className="min-w-0 overflow-hidden">
+        <p className="text-[9px] sm:text-[10px] font-semibold text-slate-500 uppercase tracking-wider leading-none">{label}</p>
         <p className={cn(
-          "text-xl font-bold tracking-tight mt-0.5",
+          "text-sm sm:text-xl font-bold tracking-tight mt-0.5 break-all leading-tight",
           danger ? "text-red-600" : "text-slate-900",
         )}>{value}</p>
-        {sub && <p className="text-[11px] text-slate-400 mt-0.5">{sub}</p>}
+        {sub && <p className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 hidden sm:block">{sub}</p>}
       </div>
     </div>
   )
@@ -330,7 +330,7 @@ export default function CustomerDetailClient({ data }: { data: CustomerDetailDat
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
 
       {/* ═══════════════════════════════════════════════════════ HEADER */}
-      <div className="bg-white border-b border-slate-100 px-6 py-4 shrink-0"
+      <div className="bg-white border-b border-slate-100 px-4 sm:px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
 
         {/* Breadcrumb */}
@@ -401,7 +401,7 @@ export default function CustomerDetailClient({ data }: { data: CustomerDetailDat
       </div>
 
       {/* ═══════════════════════════════════════════════════════ SCROLLABLE BODY */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-5">
 
         {/* ── KPI Row ─────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">

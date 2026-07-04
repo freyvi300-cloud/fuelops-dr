@@ -430,42 +430,40 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
       {/* ═══════════════════════════════════════════════════════════════════
           PAGE HEADER
       ═══════════════════════════════════════════════════════════════════ */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-4 sm:px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-start gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {/* Title */}
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Clientes</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Clientes</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
               Administra tus clientes y consulta sus saldos de combustible.
             </p>
           </div>
 
-          {/* Global search */}
-          <div className="relative hidden xl:block w-56">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" placeholder="Buscar cliente..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-sans text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all" />
+          {/* Icons group */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative hidden xl:block w-56">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input type="text" placeholder="Buscar cliente..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-sans text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all" />
+            </div>
+            <button className="relative p-2 hover:bg-slate-50 rounded-xl transition-colors">
+              <Bell className="w-5 h-5 text-slate-500" />
+              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center font-bold">3</span>
+            </button>
+            <button className="flex items-center gap-2 hover:bg-slate-50 rounded-xl px-2.5 py-2 transition-colors">
+              <div className="w-8 h-8 bg-[#1a3fa0] rounded-full flex items-center justify-center shrink-0">
+                <span className="text-white text-sm font-bold">A</span>
+              </div>
+              <span className="text-sm font-semibold text-slate-800 hidden lg:block">Administrador</span>
+              <ChevronDown className="w-4 h-4 text-slate-400 hidden lg:block" />
+            </button>
           </div>
 
-          {/* Bell */}
-          <button className="relative p-2 hover:bg-slate-50 rounded-xl transition-colors shrink-0">
-            <Bell className="w-5 h-5 text-slate-500" />
-            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center font-bold">3</span>
-          </button>
-
-          {/* User */}
-          <button className="flex items-center gap-2 hover:bg-slate-50 rounded-xl px-2.5 py-2 transition-colors shrink-0">
-            <div className="w-8 h-8 bg-[#1a3fa0] rounded-full flex items-center justify-center shrink-0">
-              <span className="text-white text-sm font-bold">A</span>
-            </div>
-            <span className="text-sm font-semibold text-slate-800 hidden lg:block">Administrador</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 hidden lg:block" />
-          </button>
-
-          {/* Add button */}
+          {/* Add button — wraps to own row on mobile */}
           <button onClick={openCreate}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors shadow-sm shadow-blue-200 shrink-0">
+            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors shadow-sm shadow-blue-200">
             <Plus className="w-4 h-4" />
             Agregar cliente
           </button>
@@ -475,7 +473,7 @@ export default function CustomersClient({ customers, stats, initialSearch, baseF
       {/* ═══════════════════════════════════════════════════════════════════
           SCROLLABLE BODY
       ═══════════════════════════════════════════════════════════════════ */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-5">
 
         {/* ── KPI Cards ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

@@ -559,13 +559,13 @@ export default function ReportsClient({ report, activePeriod, customers, activeD
     <div className="flex flex-col flex-1 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* ══ HEADER ═══════════════════════════════════════════════════════════ */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-6 py-4 shrink-0"
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700/50 px-4 sm:px-6 py-4 shrink-0"
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Reportes</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Reportes</h1>
             <p className="text-xs font-sans text-slate-400 mt-0.5">
-              {view === "weekly" ? "Reportes semanales por cliente — exporta en PDF, Excel o PNG" : "Métricas y análisis del negocio"}
+              {view === "weekly" ? "Reportes semanales por cliente" : "Métricas y análisis del negocio"}
             </p>
           </div>
 
@@ -587,14 +587,14 @@ export default function ReportsClient({ report, activePeriod, customers, activeD
                 view === "weekly" ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               )}>
               <FileDown className="w-3.5 h-3.5" />
-              Reportes semanales
+              <span className="hidden sm:inline">Reportes </span>semanales
             </button>
           </div>
         </div>
       </div>
 
       {/* ══ BODY ═════════════════════════════════════════════════════════════ */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-5">
 
         {/* ── Weekly report view ──────────────────────────────────────────── */}
         {view === "weekly" && <WeeklyReportClient customers={customers} />}

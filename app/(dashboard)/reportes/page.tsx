@@ -1,4 +1,4 @@
-import { buildFullReport } from "@/lib/reporting"
+import { buildFullReport, buildReportByRange } from "@/lib/reporting"
 import type { Period }     from "@/lib/reporting"
 import ReportsClient        from "@/components/reportes/reports-client"
 import { prisma }           from "@/lib/prisma"
@@ -10,15 +10,16 @@ const VALID_PERIODS: Period[] = ["today", "week", "month", "year"]
 export default async function ReportesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; from?: string; to?: string; customerId?: string }>
 }) {
-  const { period: raw } = await searchParams
+  const { period: raw, from, to, customerId } = await searchParams
+
   const period: Period = VALID_PERIODS.includes(raw as Period)
     ? (raw as Period)
     : "month"
 
   const [report, customers] = await Promise.all([
-    buildFullReport(period),
+    (from && to) ? buildReportByRange(from, to) : buildFullReport(period),
     prisma.customer.findMany({
       where:   { status: "ACTIVE" },
       select:  { id: true, name: true },
@@ -26,5 +27,14 @@ export default async function ReportesPage({
     }),
   ])
 
-  return <ReportsClient report={report} activePeriod={period} customers={customers} />
+  return (
+    <ReportsClient
+      report={report}
+      activePeriod={period}
+      customers={customers}
+      activeDateFrom={from}
+      activeDateTo={to}
+      activeCustomerId={customerId}
+    />
+  )
 }

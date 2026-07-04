@@ -888,6 +888,44 @@ export async function buildDashboardData(): Promise<DashboardData> {
   }
 }
 
+/** Build report for an explicit ISO date range (YYYY-MM-DD strings) */
+export async function buildReportByRange(from: string, to: string): Promise<FullReport> {
+  const range: DateRange = {
+    from:  new Date(from + "T00:00:00.000Z"),
+    to:    new Date(to   + "T23:59:59.999Z"),
+    label: `${from} – ${to}`,
+  }
+  const [
+    kpis, sales, collections, inventory,
+    customerDebt, invoiceStatus, truckActivity,
+    salesByDay, collectionsByDay, gallonsByDay, inventoryOverTime,
+  ] = await Promise.all([
+    getDashboardKPIs(),
+    getSalesMetrics(range),
+    getCollectionsMetrics(range),
+    getInventoryReport(range),
+    getCustomerDebtReport(),
+    getInvoiceStatusReport(range),
+    getTruckActivityReport(range),
+    getSalesByDay(range),
+    getCollectionsByDay(range),
+    getGallonsByDay(range),
+    getInventoryOverTime(range),
+  ])
+  return {
+    period: "month",
+    dateRange: { from: range.from.toISOString(), to: range.to.toISOString(), label: range.label },
+    kpis,
+    sales,
+    collections,
+    inventory,
+    customerDebt,
+    invoiceStatus,
+    truckActivity,
+    charts: { salesByDay, collectionsByDay, gallonsByDay, inventoryOverTime },
+  }
+}
+
 /** Main entry point — calls all computations in parallel */
 export async function buildFullReport(period: Period): Promise<FullReport> {
   const range = getDateRange(period)

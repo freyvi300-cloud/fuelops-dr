@@ -6,7 +6,7 @@ import {
   Receipt, Bell, ChevronDown, Search, DollarSign,
   Clock, AlertCircle, CheckCircle2, X, Eye,
   ChevronLeft, ChevronRight, Printer, Mail,
-  FileDown, MessageCircle, QrCode, Droplets,
+  FileDown, MessageCircle, QrCode, Droplets, Calendar, Filter,
 } from "lucide-react"
 import { cn }             from "@/lib/utils"
 import type { SerializedInvoice, SerializedInvoiceDetail, InvoiceStats } from "@/app/actions/invoices"
@@ -307,25 +307,33 @@ interface Props {
   stats:          InvoiceStats
   initialSearch:  string
   initialStatus:  string
+  customers?:     { id: string; name: string }[]
 }
 
-export default function InvoicesClient({ invoices, stats, initialSearch, initialStatus }: Props) {
+export default function InvoicesClient({ invoices, stats, initialSearch, initialStatus, customers = [] }: Props) {
   const router  = useRouter()
   const [, startTransition] = useTransition()
 
   const [search,      setSearch]      = useState(initialSearch)
   const [statusFilter,setStatusFilter]= useState(initialStatus)
+  const [dateFrom,    setDateFrom]    = useState("")
+  const [dateTo,      setDateTo]      = useState("")
+  const [custId,      setCustId]      = useState("")
   const [page,        setPage]        = useState(1)
   const [detail,      setDetail]      = useState<SerializedInvoiceDetail | null>(null)
   const [loadingId,   setLoadingId]   = useState<string | null>(null)
 
-  // ── Client-side filter (supplements server-side) ───────────────────────────
+  // ── Client-side filter ─────────────────────────────────────────────────────
   const q = search.toLowerCase().trim()
   const filtered = invoices.filter(inv => {
     const matchSearch = !q || [inv.invoiceNumber, inv.customerName, inv.truckCode ?? ""]
       .some(v => v.toLowerCase().includes(q))
     const matchStatus = statusFilter === "ALL" || inv.status === statusFilter
-    return matchSearch && matchStatus
+    const d = new Date(inv.issueDate)
+    const afterFrom = !dateFrom || d >= new Date(dateFrom + "T00:00:00")
+    const beforeTo  = !dateTo   || d <= new Date(dateTo   + "T23:59:59")
+    const matchCust = !custId || inv.customerId === custId
+    return matchSearch && matchStatus && afterFrom && beforeTo && matchCust
   })
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -414,18 +422,57 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
             sub={stats.countOverdue > 0 ? "Requieren atención" : "Al día"} />
         </div>
 
-        {/* ── Search + Filter chips ───────────────────────────────────────── */}
-        <div className="space-y-3">
-          <div className="relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1) }}
-              placeholder="Buscar por número, cliente o equipo..."
-              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
-              style={{ boxShadow: "var(--shadow-card)" }}
-            />
+        {/* ── Filters ─────────────────────────────────────────────────────── */}
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-100 dark:border-slate-700/50 rounded-2xl p-4 space-y-3"
+          style={{ boxShadow: "var(--shadow-card)" }}>
+          {/* Row 1: search + dates + customer */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[160px] max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              <input type="text" value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
+                placeholder="N° factura, cliente..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+
+            <div className="relative">
+              <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input type="date" value={dateFrom}
+                onChange={e => { setDateFrom(e.target.value); setPage(1) }}
+                className="pl-8 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+            <span className="text-slate-400 text-xs shrink-0">—</span>
+            <div className="relative">
+              <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input type="date" value={dateTo}
+                onChange={e => { setDateTo(e.target.value); setPage(1) }}
+                className="pl-8 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+
+            {customers.length > 0 && (
+              <div className="relative">
+                <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <select value={custId} onChange={e => { setCustId(e.target.value); setPage(1) }}
+                  className="pl-8 pr-7 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all appearance-none cursor-pointer">
+                  <option value="">Todos los clientes</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              </div>
+            )}
+
+            {(dateFrom || dateTo || custId) && (
+              <button onClick={() => { setDateFrom(""); setDateTo(""); setCustId(""); setPage(1) }}
+                className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                <X className="w-3.5 h-3.5" /> Limpiar
+              </button>
+            )}
           </div>
 
+          {/* Row 2: status chips */}
           <div className="flex items-center gap-2 flex-wrap">
             {FILTER_OPTIONS.map(opt => (
               <button key={opt.value}
@@ -434,13 +481,12 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
                   "px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border",
                   statusFilter === opt.value
                     ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                )}
-                style={{ boxShadow: statusFilter === opt.value ? undefined : "var(--shadow-card)" }}
-              >
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600"
+                )}>
                 {opt.label}
               </button>
             ))}
+            <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{filtered.length} resultado{filtered.length !== 1 ? "s" : ""}</span>
           </div>
         </div>
 

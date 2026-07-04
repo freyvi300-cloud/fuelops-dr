@@ -6,7 +6,7 @@ import {
   DollarSign, Bell, ChevronDown, Search, Users, Receipt,
   Banknote, ArrowRightLeft, Building2, FileText, MoreHorizontal,
   X, CheckCircle2, RotateCcw, AlertCircle,
-  ChevronLeft, ChevronRight, Plus, Clock, Wallet,
+  ChevronLeft, ChevronRight, Plus, Clock, Wallet, Calendar, Filter,
 } from "lucide-react"
 import { cn }                          from "@/lib/utils"
 import type { SerializedPayment, PaymentFormData, PaymentStats, PaymentResult } from "@/app/actions/payments"
@@ -449,17 +449,23 @@ export default function PaymentsClient({ payments, stats, customers }: Props) {
   const [formError, setFormError]    = useState<string | null>(null)
   const [receipt,   setReceipt]      = useState<PaymentResult | null>(null)
   const [search,    setSearch]       = useState("")
-  const [dateFilter,setDateFilter]   = useState("ALL")
+  const [dateFrom,  setDateFrom]     = useState("")
+  const [dateTo,    setDateTo]       = useState("")
+  const [custId,    setCustId]       = useState("")
+  const [methodF,   setMethodF]      = useState("")
   const [page,      setPage]         = useState(1)
 
   // ── Filtering ──────────────────────────────────────────────────────────────
-  const cutoff = getDateCutoff(dateFilter)
   const q = search.toLowerCase().trim()
   const filtered = payments.filter(p => {
-    const afterCutoff = !cutoff || new Date(p.paymentDate) >= cutoff
-    const matchSearch = !q || [p.paymentNumber, p.customerName, p.invoiceNumber ?? ""]
+    const d = new Date(p.paymentDate)
+    const afterFrom   = !dateFrom || d >= new Date(dateFrom + "T00:00:00")
+    const beforeTo    = !dateTo   || d <= new Date(dateTo   + "T23:59:59")
+    const matchSearch = !q || [p.paymentNumber, p.customerName, p.invoiceNumber ?? "", p.reference ?? ""]
       .some(v => v.toLowerCase().includes(q))
-    return afterCutoff && matchSearch
+    const matchCust   = !custId  || p.customerId === custId
+    const matchMethod = !methodF || p.paymentMethod === methodF
+    return afterFrom && beforeTo && matchSearch && matchCust && matchMethod
   })
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -543,30 +549,67 @@ export default function PaymentsClient({ payments, stats, customers }: Props) {
             sub="Facturas con saldo" />
         </div>
 
-        {/* ── Date filter + Search ────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            {DATE_FILTERS.map(f => (
-              <button key={f.value} onClick={() => { setDateFilter(f.value); setPage(1) }}
-                className={cn(
-                  "px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border",
-                  dateFilter === f.value
-                    ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                )}
-                style={{ boxShadow: dateFilter === f.value ? undefined : "var(--shadow-card)" }}>
-                {f.label}
+        {/* ── Filters ─────────────────────────────────────────────────────── */}
+        <div className="bg-white dark:bg-slate-900/80 border border-slate-100 dark:border-slate-700/50 rounded-2xl p-4 space-y-3"
+          style={{ boxShadow: "var(--shadow-card)" }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[160px] max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              <input type="text" value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
+                placeholder="Cliente, factura, referencia..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+
+            {/* Date from */}
+            <div className="relative">
+              <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input type="date" value={dateFrom}
+                onChange={e => { setDateFrom(e.target.value); setPage(1) }}
+                className="pl-8 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+            <span className="text-slate-400 text-xs shrink-0">—</span>
+            {/* Date to */}
+            <div className="relative">
+              <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input type="date" value={dateTo}
+                onChange={e => { setDateTo(e.target.value); setPage(1) }}
+                className="pl-8 pr-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+
+            {/* Customer */}
+            <div className="relative">
+              <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <select value={custId} onChange={e => { setCustId(e.target.value); setPage(1) }}
+                className="pl-8 pr-7 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all appearance-none cursor-pointer">
+                <option value="">Todos los clientes</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            </div>
+
+            {/* Method */}
+            <div className="relative">
+              <Wallet className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <select value={methodF} onChange={e => { setMethodF(e.target.value); setPage(1) }}
+                className="pl-8 pr-7 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-white dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all appearance-none cursor-pointer">
+                <option value="">Todos los métodos</option>
+                {Object.entries(METHOD_CONFIG).map(([val, cfg]) => <option key={val} value={val}>{cfg.label}</option>)}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            </div>
+
+            {(dateFrom || dateTo || custId || methodF) && (
+              <button onClick={() => { setDateFrom(""); setDateTo(""); setCustId(""); setMethodF(""); setPage(1) }}
+                className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                <X className="w-3.5 h-3.5" /> Limpiar
               </button>
-            ))}
-          </div>
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1) }}
-              placeholder="Buscar por cliente, factura o número..."
-              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
-              style={{ boxShadow: "var(--shadow-card)" }}
-            />
+            )}
+            <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">{filtered.length} resultado{filtered.length !== 1 ? "s" : ""}</span>
           </div>
         </div>
 

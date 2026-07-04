@@ -1,5 +1,6 @@
 import { getInvoices, getInvoiceStats } from "@/app/actions/invoices"
 import InvoicesClient from "@/components/facturas/invoices-client"
+import { prisma }     from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
 
@@ -10,9 +11,14 @@ export default async function FacturasPage({
 }) {
   const { q, status } = await searchParams
 
-  const [invoices, stats] = await Promise.all([
+  const [invoices, stats, customers] = await Promise.all([
     getInvoices(q, status),
     getInvoiceStats(),
+    prisma.customer.findMany({
+      where:   { status: "ACTIVE" },
+      select:  { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ])
 
   return (
@@ -21,6 +27,7 @@ export default async function FacturasPage({
       stats={stats}
       initialSearch={q ?? ""}
       initialStatus={status ?? "ALL"}
+      customers={customers}
     />
   )
 }

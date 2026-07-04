@@ -6,7 +6,7 @@ import {
   Droplets, Plus, Bell, ChevronDown, TrendingUp,
   TrendingDown, Clock, X, AlertCircle, ChevronLeft,
   ChevronRight, Fuel, Wrench, Search, CalendarDays,
-  TriangleAlert, Gauge,
+  TriangleAlert, Gauge, Calendar,
 } from "lucide-react"
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
@@ -104,12 +104,12 @@ function ConsumptionChart({ stats }: { stats: InventoryStats }) {
   const hasData = data.some(d => d.salidas > 0)
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 p-5"
+    <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 p-5"
       style={{ boxShadow: "var(--shadow-card)" }}>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-sm font-bold text-slate-800">Consumo últimos 30 días</h2>
-          <p className="text-[11px] text-slate-400 font-sans mt-0.5">Salidas diarias (barras) y balance del tanque (línea)</p>
+          <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Consumo últimos 30 días</h2>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 font-sans mt-0.5">Salidas diarias (barras) y balance del tanque (línea)</p>
         </div>
         <div className="flex items-center gap-4 text-[11px] font-sans text-slate-500">
           <span className="flex items-center gap-1.5">
@@ -156,7 +156,14 @@ function ConsumptionChart({ stats }: { stats: InventoryStats }) {
               width={52}
             />
             <Tooltip
-              contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 11, fontFamily: "var(--font-sans)" }}
+              contentStyle={{
+                background: "var(--chart-tooltip-bg)",
+                border: "1px solid var(--chart-tooltip-border)",
+                color: "var(--chart-tooltip-color)",
+                borderRadius: 10, fontSize: 11, fontFamily: "var(--font-sans)",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              }}
+              labelStyle={{ color: "var(--chart-tooltip-label)" }}
               formatter={(value, name) => [
                 `${Number(value).toLocaleString("es-DO", { minimumFractionDigits: 2 })} gal`,
                 name === "salidas" ? "Salidas" : "Balance",
@@ -388,6 +395,8 @@ export default function InventoryClient({ movements, stats }: Props) {
   const [formError, setFormError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [typeFilter, setTypeFilter] = useState<"ALL" | "IN" | "OUT" | "ADJUSTMENT">("ALL")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo,   setDateTo]   = useState("")
   const [page, setPage] = useState(1)
 
   // ── Filtering ──────────────────────────────────────────────────────────────
@@ -396,7 +405,10 @@ export default function InventoryClient({ movements, stats }: Props) {
     const matchesSearch = !q || [m.reference ?? "", m.description ?? ""]
       .some(v => v.toLowerCase().includes(q))
     const matchesType = typeFilter === "ALL" || m.type === typeFilter
-    return matchesSearch && matchesType
+    const d = new Date(m.movedAt)
+    const afterFrom = !dateFrom || d >= new Date(dateFrom + "T00:00:00")
+    const beforeTo  = !dateTo   || d <= new Date(dateTo   + "T23:59:59")
+    return matchesSearch && matchesType && afterFrom && beforeTo
   })
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -538,21 +550,50 @@ export default function InventoryClient({ movements, stats }: Props) {
         <ConsumptionChart stats={stats} />
 
         {/* ── Filter bar ─────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1) }}
-              placeholder="Buscar por referencia o descripción..."
-              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
-              style={{ boxShadow: "var(--shadow-card)" }}
-            />
+        <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-100 dark:border-slate-700/50 p-4 space-y-3"
+          style={{ boxShadow: "var(--shadow-card)" }}>
+          {/* Row 1: search + date range */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input type="text" value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
+                placeholder="Buscar referencia o descripción..."
+                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+              />
+            </div>
+            {/* Date from */}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <input type="date" value={dateFrom}
+                  onChange={e => { setDateFrom(e.target.value); setPage(1) }}
+                  className="pl-8 pr-3 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-slate-50 dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+                />
+              </div>
+              <span className="text-slate-400 text-xs font-medium">—</span>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <input type="date" value={dateTo}
+                  onChange={e => { setDateTo(e.target.value); setPage(1) }}
+                  className="pl-8 pr-3 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-slate-50 dark:bg-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1) }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                  title="Limpiar fechas">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Type filter chips */}
-          <div className="flex items-center gap-2">
+          {/* Row 2: type filter chips */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tipo:</span>
             {([
-              { value: "ALL",        label: "Todos"   },
+              { value: "ALL",        label: "Todos"    },
               { value: "IN",         label: "Entradas" },
               { value: "OUT",        label: "Salidas"  },
               { value: "ADJUSTMENT", label: "Ajustes"  },
@@ -563,13 +604,16 @@ export default function InventoryClient({ movements, stats }: Props) {
                   "px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border",
                   typeFilter === opt.value
                     ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                )}
-                style={{ boxShadow: typeFilter === opt.value ? undefined : "var(--shadow-card)" }}
-              >
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600"
+                )}>
                 {opt.label}
               </button>
             ))}
+            {(search || typeFilter !== "ALL" || dateFrom || dateTo) && (
+              <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
+                {filtered.length} resultado{filtered.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
         </div>
 

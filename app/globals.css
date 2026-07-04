@@ -222,3 +222,36 @@
 .dark ::-webkit-scrollbar-track { background: #0d1526; }
 .dark ::-webkit-scrollbar-thumb { background: #1e2d47; border-radius: 4px; }
 .dark ::-webkit-scrollbar-thumb:hover { background: #2f4a7a; }
+
+/* ─── Recharts tooltip — dark mode via CSS custom properties ─────────────────
+   contentStyle accepts inline styles, not Tailwind classes.
+   Set the variables here so charts can reference them without JS state.
+─────────────────────────────────────────────────────────────────────────────── */
+:root {
+  --chart-tooltip-bg:     #ffffff;
+  --chart-tooltip-border: #e2e8f0;
+  --chart-tooltip-color:  #1e293b;
+  --chart-tooltip-label:  #64748b;
+}
+.dark {
+  --chart-tooltip-bg:     #1e293b;
+  --chart-tooltip-border: #334155;
+  --chart-tooltip-color:  #f1f5f9;
+  --chart-tooltip-label:  #94a3b8;
+}
+
+/* ─── Date inputs — dark mode ────────────────────────────────────────────────
+   color-scheme: dark → browser renders the calendar picker in dark colors
+   and inverts the calendar icon automatically.
+─────────────────────────────────────────────────────────────────────────────── */
+.dark input[type="date"],
+.dark input[type="datetime-local"],
+.dark input[type="time"] {
+  color-scheme: dark;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7) brightness(1.4);
+  cursor: pointer;
+  opacity: 0.8;
+}

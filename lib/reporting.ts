@@ -25,25 +25,80 @@ export interface DateRange {
   label: string
 }
 
+/**
+ * República Dominicana = UTC-4 (AST, sin horario de verano).
+ * All DB timestamps are UTC. To filter by the *local* business day we must
+ * convert: local midnight = UTC midnight + 4 h → from = UTC 04:00:00 of the
+ * same calendar date; to = UTC 03:59:59.999 of the next calendar date.
+ *
+ * Using a fixed offset (not the server's TZ) guarantees correct results
+ * regardless of where the Next.js process is hosted (UTC, UTC-5, etc.).
+ */
+const LOCAL_TZ_OFFSET_HOURS = -4   // DR = UTC-4 (AST, no DST)
+
+/**
+ * Returns the UTC [start, end] that correspond to "today" in the local
+ * business timezone, given the fixed offset LOCAL_TZ_OFFSET_HOURS.
+ *
+ * Example (DR, UTC-4):
+ *   local today July 3  →  UTC from: Jul 3 04:00:00  |  UTC to: Jul 4 03:59:59.999
+ */
+export function localDayRange(): { start: Date; end: Date } {
+  const nowUTC  = Date.now()
+  // Shift UTC epoch to local time so getUTCFullYear/Month/Date return local values
+  const localMs = nowUTC + LOCAL_TZ_OFFSET_HOURS * 3_600_000
+  const local   = new Date(localMs)
+
+  // Calendar date in local time, expressed as a UTC midnight point
+  const localMidnightUTC = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate())
+
+  // Convert back to actual UTC: subtract the offset (offset is negative for west)
+  const utcStart = new Date(localMidnightUTC - LOCAL_TZ_OFFSET_HOURS * 3_600_000)
+  const utcEnd   = new Date(utcStart.getTime() + 86_400_000 - 1)   // +24h -1ms
+
+  return { start: utcStart, end: utcEnd }
+}
+
+/**
+ * Same as localDayRange() but for the first day of the current local month.
+ * Returns UTC boundaries for [local month start 00:00 → now].
+ */
+export function localMonthStart(): Date {
+  const nowUTC  = Date.now()
+  const localMs = nowUTC + LOCAL_TZ_OFFSET_HOURS * 3_600_000
+  const local   = new Date(localMs)
+  // First day of the local month at midnight local = UTC
+  const localFirstMs = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1)
+  return new Date(localFirstMs - LOCAL_TZ_OFFSET_HOURS * 3_600_000)
+}
+
 export function getDateRange(period: Period): DateRange {
-  const now     = new Date()
-  const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const from    = new Date(todayMs)
-  const to      = new Date(todayMs + 24 * 60 * 60 * 1000 - 1) // end of today
+  const { start: todayStart, end: todayEnd } = localDayRange()
+  const monthStart = localMonthStart()
 
   if (period === "today") {
-    return { from, to, label: "Hoy" }
+    return { from: todayStart, to: todayEnd, label: "Hoy" }
   }
   if (period === "week") {
-    const startOfWeek = new Date(from)
-    startOfWeek.setDate(from.getDate() - from.getDay())
-    return { from: startOfWeek, to, label: "Esta semana" }
+    // Find Monday of the current local week
+    const nowUTC  = Date.now()
+    const localMs = nowUTC + LOCAL_TZ_OFFSET_HOURS * 3_600_000
+    const local   = new Date(localMs)
+    const dayOfWeek = local.getUTCDay() || 7   // 1=Mon … 7=Sun
+    const mondayLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - dayOfWeek + 1)
+    const weekStart   = new Date(mondayLocal - LOCAL_TZ_OFFSET_HOURS * 3_600_000)
+    return { from: weekStart, to: todayEnd, label: "Esta semana" }
   }
   if (period === "month") {
-    return { from: new Date(now.getFullYear(), now.getMonth(), 1), to, label: "Este mes" }
+    return { from: monthStart, to: todayEnd, label: "Este mes" }
   }
-  // year
-  return { from: new Date(now.getFullYear(), 0, 1), to, label: "Este año" }
+  // year — use local year start
+  const nowUTC  = Date.now()
+  const localMs = nowUTC + LOCAL_TZ_OFFSET_HOURS * 3_600_000
+  const local   = new Date(localMs)
+  const yearStartLocal = Date.UTC(local.getUTCFullYear(), 0, 1)
+  const yearStart      = new Date(yearStartLocal - LOCAL_TZ_OFFSET_HOURS * 3_600_000)
+  return { from: yearStart, to: todayEnd, label: "Este año" }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -190,9 +245,8 @@ async function _buildSummary(period: Period, prefix: string): Promise<EmailSumma
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function getDashboardKPIs(): Promise<DashboardKPIs> {
-  const now        = new Date()
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const { start: todayStart, end: todayEnd } = localDayRange()
+  const monthStart = localMonthStart()
 
   const [
     todaySales, monthSales,
@@ -203,7 +257,7 @@ export async function getDashboardKPIs(): Promise<DashboardKPIs> {
   ] = await Promise.all([
     // Sales today/month
     prisma.supply.aggregate({
-      where: { suppliedAt: { gte: todayStart } },
+      where: { suppliedAt: { gte: todayStart, lte: todayEnd } },
       _sum: { total: true, gallons: true },
     }),
     prisma.supply.aggregate({
@@ -212,7 +266,7 @@ export async function getDashboardKPIs(): Promise<DashboardKPIs> {
     }),
     // Collections today/month
     prisma.payment.aggregate({
-      where: { paymentDate: { gte: todayStart } },
+      where: { paymentDate: { gte: todayStart, lte: todayEnd } },
       _sum: { amount: true },
     }),
     prisma.payment.aggregate({
@@ -587,16 +641,18 @@ export interface DashboardData {
 export async function getInventoryStatus(
   settings?: SystemSettings,
 ): Promise<InventoryStatus> {
-  const now        = new Date()
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const daysElapsed = Math.max(1, now.getDate())
+  const { start: todayStart, end: todayEnd } = localDayRange()
+  const monthStart  = localMonthStart()
+  // daysElapsed: how many local days have passed in the current month (≥1)
+  const nowUTC      = Date.now()
+  const localMs     = nowUTC + LOCAL_TZ_OFFSET_HOURS * 3_600_000
+  const daysElapsed = Math.max(1, new Date(localMs).getUTCDate())
 
   const [resolvedSettings, allMovements, todayOut, monthOut] = await Promise.all([
     settings ? Promise.resolve(settings) : getSystemSettings(),
     prisma.inventoryMovement.findMany({ select: { type: true, gallons: true } }),
     prisma.inventoryMovement.aggregate({
-      where: { type: "OUT", movedAt: { gte: todayStart } },
+      where: { type: "OUT", movedAt: { gte: todayStart, lte: todayEnd } },
       _sum:  { gallons: true },
     }),
     prisma.inventoryMovement.aggregate({
@@ -624,12 +680,11 @@ export async function getInventoryStatus(
 }
 
 export async function getActivityFeed(limit = 20): Promise<ActivityItem[]> {
-  const now        = new Date()
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const { start: todayStart, end: todayEnd } = localDayRange()
 
   const [supplies, payments] = await Promise.all([
     prisma.supply.findMany({
-      where:   { suppliedAt: { gte: todayStart } },
+      where:   { suppliedAt: { gte: todayStart, lte: todayEnd } },
       include: {
         customer: { select: { name: true } },
         truck:    { select: { code: true } },
@@ -639,7 +694,7 @@ export async function getActivityFeed(limit = 20): Promise<ActivityItem[]> {
       take:    limit,
     }),
     prisma.payment.findMany({
-      where:   { paymentDate: { gte: todayStart } },
+      where:   { paymentDate: { gte: todayStart, lte: todayEnd } },
       include: {
         customer: { select: { name: true } },
         invoice:  { select: { invoiceNumber: true } },

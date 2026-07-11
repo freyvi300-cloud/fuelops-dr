@@ -589,7 +589,7 @@ export default function ExecutiveDashboard({ data }: { data: DashboardData }) {
 
         {/* Footer */}
         <p className="text-center text-[11px] font-sans text-slate-400 pb-2">
-          © 2025 FuelOps-DR — Todos los datos calculados desde{" "}
+          © 2025 LBP Inversiones y Servicios S.R.L. — Todos los datos calculados desde{" "}
           <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-[10px]">lib/reporting.ts</code>
         </p>
       </div>

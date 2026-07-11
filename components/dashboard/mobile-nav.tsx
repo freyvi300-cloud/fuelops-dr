@@ -108,8 +108,8 @@ export default function MobileNav() {
               <Droplets className="w-4 h-4 text-[#1a3fa0]" />
             </div>
             <div>
-              <p className="text-white font-bold text-sm leading-tight">FuelOps-DR</p>
-              <p className="text-blue-200 text-[11px] leading-tight">Control total</p>
+              <p className="text-white font-bold text-sm leading-tight">LBP</p>
+              <p className="text-blue-200 text-[11px] leading-tight">Inversiones y Servicios</p>
             </div>
           </div>
           <button

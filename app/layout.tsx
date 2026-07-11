@@ -17,8 +17,13 @@ const jakarta = Plus_Jakarta_Sans({
 })
 
 export const metadata: Metadata = {
-  title: "FuelOps DR",
+  title: "LBP Inversiones y Servicios S.R.L.",
   description: "Plataforma de operaciones y contabilidad para distribuidoras de diésel",
+  openGraph: {
+    title: "LBP Inversiones y Servicios S.R.L.",
+    description: "Plataforma de operaciones y contabilidad para distribuidoras de diésel",
+    siteName: "LBP Inversiones y Servicios S.R.L.",
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

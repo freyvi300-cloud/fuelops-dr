@@ -59,7 +59,7 @@ const fmtGal = (n: number) =>
 // ─── Static responses ─────────────────────────────────────────────────────────
 
 const GREETING = (name: string | null) =>
-  `👋 Hola${name ? `, *${name}*` : ""}! Soy *Nova*, el asistente de *FuelOps-DR*.\n\n` +
+  `👋 Hola${name ? `, *${name}*` : ""}! Soy *Nova*, el asistente de *LBP Inversiones y Servicios*.\n\n` +
   `Escribe un comando:\n` +
   `• *inventario*\n• *ventas hoy*\n• *clientes deuda*\n• *ayuda*\n\n` +
   `También puedes enviar:\n` +
@@ -81,7 +81,7 @@ const NOT_UNDERSTOOD = (text: string) =>
   `❓ No reconozco: _"${text}"_\n\nEscribe *ayuda* para ver los comandos disponibles.`
 
 const NON_TEXT_TEXT =
-  `👋 Soy *Nova*, el asistente de *FuelOps-DR*.\n\n` +
+  `👋 Soy *Nova*, el asistente de *LBP Inversiones y Servicios*.\n\n` +
   `Solo entiendo texto e imágenes. Escribe *ayuda* para ver los comandos.`
 
 const ERROR_MSG = (cmd: string) =>

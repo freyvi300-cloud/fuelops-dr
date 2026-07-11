@@ -329,7 +329,7 @@ function BankDetail({ bank, dateFrom, dateTo, onBack }: {
     for (let i = 1; i <= pages; i++) {
       doc.setPage(i)
       doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(150, 150, 150)
-      doc.text(`FuelOps DR — ${bank.bankName} — Pág. ${i}/${pages}`, 14, doc.internal.pageSize.getHeight() - 8)
+      doc.text(`LBP Inversiones y Servicios — ${bank.bankName} — Pág. ${i}/${pages}`, 14, doc.internal.pageSize.getHeight() - 8)
     }
     doc.save(`banco_${bank.bankName.replace(/\s+/g, "_")}_${dateFrom}_${dateTo}.pdf`)
   }
@@ -716,7 +716,7 @@ function ResumenView({ data, dateFrom, dateTo }: { data: FinanceDashboardResult;
     const pages = doc.getNumberOfPages()
     for (let i = 1; i <= pages; i++) {
       doc.setPage(i); doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(150, 150, 150)
-      doc.text(`FuelOps DR — Finanzas — Pág. ${i}/${pages}`, 14, doc.internal.pageSize.getHeight() - 8)
+      doc.text(`LBP Inversiones y Servicios — Finanzas — Pág. ${i}/${pages}`, 14, doc.internal.pageSize.getHeight() - 8)
     }
     doc.save(`finanzas_${dateFrom}_${dateTo}.pdf`)
   }

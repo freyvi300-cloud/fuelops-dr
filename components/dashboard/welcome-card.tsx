@@ -14,7 +14,7 @@ export default function WelcomeCard() {
 
       {/* Text */}
       <h2 className="text-xl font-bold text-slate-900 mb-2 tracking-tight">
-        Bienvenido a FuelOps-DR
+        Bienvenido a LBP Inversiones y Servicios S.R.L.
       </h2>
       <p className="text-sm font-sans text-slate-500 max-w-md leading-relaxed mb-7">
         Registra tu primer suministro de combustible para comenzar

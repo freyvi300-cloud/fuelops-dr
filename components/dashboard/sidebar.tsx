@@ -84,9 +84,9 @@ export default function Sidebar() {
           <Droplets className="w-5 h-5 text-[#1a3fa0]" />
         </div>
         <FadeBlock>
-          <p className="text-white font-bold text-sm leading-tight">FuelOps-DR</p>
+          <p className="text-white font-bold text-sm leading-tight">LBP</p>
           <p className="text-blue-200 text-[11px] leading-tight mt-0.5">
-            Control total de tu combustible
+            Inversiones y Servicios S.R.L.
           </p>
         </FadeBlock>
       </div>

@@ -158,7 +158,7 @@ function InvoiceDetailModal({
             <div className="bg-slate-50 rounded-xl p-4">
               <p className="text-[10px] font-sans font-semibold text-slate-400 uppercase tracking-wider mb-2">De</p>
               <p className="font-bold text-slate-800 text-sm">Empresa de Distribución de Diésel</p>
-              <p className="text-[11px] font-sans text-slate-400 mt-0.5">Sistema FuelOps-DR</p>
+              <p className="text-[11px] font-sans text-slate-400 mt-0.5">LBP Inversiones y Servicios S.R.L.</p>
               {/* TODO: populate from SystemSettings model (Phase 2) */}
             </div>
             {/* To */}

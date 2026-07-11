@@ -233,7 +233,7 @@ async function _buildSummary(period: Period, prefix: string): Promise<EmailSumma
   const report = await buildFullReport(period)
   const range  = getDateRange(period)
   return {
-    subject:     `${prefix} FuelOps-DR — ${range.label}`,
+    subject:     `${prefix} LBP Inversiones y Servicios — ${range.label}`,
     period,
     generatedAt: new Date().toISOString(),
     report,

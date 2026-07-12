@@ -46,10 +46,14 @@ export default auth((req) => {
 
   // ── 2. No session → redirect to /login ───────────────────────────────────
   if (!session) {
+    // Already on the login page — let it render; do NOT redirect (avoids loop)
+    if (pathname === "/login") return NextResponse.next()
+
     // API routes without a session return 401 rather than an HTML redirect
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+
     const loginUrl = new URL("/login", nextUrl)
     // Preserve the original destination so we can redirect back after login
     if (pathname !== "/") loginUrl.searchParams.set("callbackUrl", pathname)

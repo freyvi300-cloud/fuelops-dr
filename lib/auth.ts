@@ -26,6 +26,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const passwordValid = await compare(password, user.passwordHash)
         if (!passwordValid) return null
 
+        // Record the login timestamp. Failure is non-fatal — valid credentials
+        // should never be blocked by a timestamp write error.
+        try {
+          await prisma.user.update({
+            where: { id: user.id },
+            data:  { lastLoginAt: new Date() },
+          })
+        } catch {
+          // Log to server console only; never expose DB errors to the client
+          console.error("[auth] Failed to update lastLoginAt for user", user.id)
+        }
+
         return {
           id:    user.id,
           email: user.email ?? "",

@@ -26,23 +26,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const passwordValid = await compare(password, user.passwordHash)
         if (!passwordValid) return null
 
-        // Record the login timestamp. Failure is non-fatal — valid credentials
-        // should never be blocked by a timestamp write error.
+        // Record login timestamp — non-fatal if it fails
         try {
           await prisma.user.update({
             where: { id: user.id },
             data:  { lastLoginAt: new Date() },
           })
         } catch {
-          // Log to server console only; never expose DB errors to the client
           console.error("[auth] Failed to update lastLoginAt for user", user.id)
         }
 
         return {
-          id:    user.id,
-          email: user.email ?? "",
-          name:  user.name  ?? "",
-          role:  user.role,
+          id:       user.id,
+          email:    user.email    ?? "",
+          name:     user.name     ?? "",
+          role:     user.role,
+          isActive: user.isActive,
         }
       },
     }),
@@ -57,15 +56,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     jwt({ token, user }) {
       if (user) {
-        // Persist role and id from the authorize() return value into the JWT
-        token.role = (user as { role?: string }).role
-        token.id   = user.id
+        // Snapshot role and isActive at login time into the JWT.
+        // Changes to either field won't be reflected until the token expires
+        // and the user logs in again (JWT strategy limitation — see middleware.ts).
+        token.role     = (user as { role?: string }).role
+        token.isActive = (user as { isActive?: boolean }).isActive
       }
       return token
     },
     session({ session, token }) {
-      if (token.sub)  session.user.id   = token.sub
-      if (token.role) session.user.role = token.role as string
+      if (token.sub)              session.user.id       = token.sub
+      if (token.role)             session.user.role     = token.role     as string
+      if (token.isActive != null) session.user.isActive = token.isActive as boolean
       return session
     },
   },

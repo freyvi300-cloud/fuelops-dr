@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation"
 import {
   LayoutDashboard, Fuel, Users, Truck, Droplets,
   Receipt, CircleDollarSign, BarChart3, UserCog, Settings, MessageCircle,
-  TrendingUp, Sun, Moon, Monitor,
+  TrendingUp, Sun, Moon, Monitor, LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import ThemeToggle from "@/components/theme/theme-toggle"
 import { useTheme } from "@/components/theme/theme-provider"
+import { signOut } from "next-auth/react"
 
 const navItems = [
   { href: "/",              label: "Dashboard",            icon: LayoutDashboard, primary: false },
@@ -136,6 +137,39 @@ export default function Sidebar() {
 
       {/* ── Footer ─────────────────────────────────────────────── */}
       <div className="mx-2 mb-4 space-y-2">
+
+        {/* Logout — two versions stacked; icon-only when collapsed, icon+label when expanded */}
+        <div className="relative h-9">
+          {/* COLLAPSED: centered icon */}
+          <div className={cn(
+            "absolute inset-0 flex items-center justify-center",
+            "transition-opacity duration-150",
+            "group-hover:opacity-0 group-hover:pointer-events-none",
+          )}>
+            <button
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              title="Cerrar sesión"
+              className="w-10 h-9 flex items-center justify-center rounded-lg text-blue-300 hover:bg-white/10 hover:text-white transition-colors duration-200"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+          {/* EXPANDED: icon + label */}
+          <div className={cn(
+            "absolute inset-0 flex items-center px-1",
+            "opacity-0 pointer-events-none",
+            "group-hover:opacity-100 group-hover:pointer-events-auto",
+            "transition-opacity duration-200 delay-100",
+          )}>
+            <button
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              className="flex items-center gap-2 w-full px-2.5 py-2 rounded-lg text-sm text-blue-200 hover:bg-white/10 hover:text-white transition-colors duration-200 whitespace-nowrap"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
 
         {/* Theme toggle — two versions stacked absolutely within a fixed-height container */}
         <div className="relative h-9">

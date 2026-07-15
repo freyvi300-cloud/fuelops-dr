@@ -8,10 +8,11 @@ import { cn } from "@/lib/utils"
 
 export default function LoginPage() {
   const router = useRouter()
-  const [email,    setEmail]    = useState("")
-  const [password, setPassword] = useState("")
-  const [error,    setError]    = useState<string | null>(null)
-  const [loading,  setLoading]  = useState(false)
+  const [email,      setEmail]      = useState("")
+  const [password,   setPassword]   = useState("")
+  const [rememberMe, setRememberMe] = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+  const [loading,    setLoading]    = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -21,6 +22,7 @@ export default function LoginPage() {
     const result = await signIn("credentials", {
       email,
       password,
+      rememberMe: String(rememberMe),
       redirect: false,
     })
 
@@ -115,6 +117,46 @@ export default function LoginPage() {
               />
             </div>
 
+            {/* Remember me */}
+            <label className="flex items-center gap-2.5 cursor-pointer select-none group">
+              <div className="relative shrink-0">
+                <input
+                  id="rememberMe"
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={e => setRememberMe(e.target.checked)}
+                  disabled={loading}
+                  className="sr-only peer"
+                />
+                <div className={cn(
+                  "w-4 h-4 rounded border-2 transition-colors duration-150",
+                  "border-slate-300 dark:border-slate-600",
+                  "peer-checked:bg-[#1a3fa0] peer-checked:border-[#1a3fa0]",
+                  "peer-disabled:opacity-50",
+                  "group-hover:border-[#1a3fa0] dark:group-hover:border-blue-400",
+                )}>
+                  {rememberMe && (
+                    <svg
+                      className="w-2.5 h-2.5 text-white absolute top-0.5 left-0.5"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                    >
+                      <path
+                        d="M1.5 5L4 7.5L8.5 2.5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+              </div>
+              <span className="text-sm text-slate-500 dark:text-slate-400 peer-checked:text-slate-700">
+                Mantener mi sesión iniciada <span className="text-slate-400 dark:text-slate-500">(30 días)</span>
+              </span>
+            </label>
+
             {error && (
               <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40">
                 <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
@@ -127,7 +169,7 @@ export default function LoginPage() {
               disabled={loading}
               className={cn(
                 "w-full py-2.5 px-4 rounded-xl text-sm font-semibold",
-                "bg-[#1a3fa0] hover:bg-[#1535880] dark:bg-[#1a3fa0] dark:hover:bg-[#1535880]",
+                "bg-[#1a3fa0] hover:bg-[#153588] dark:bg-[#1a3fa0] dark:hover:bg-[#153588]",
                 "text-white",
                 "transition-all duration-200",
                 "disabled:opacity-60 disabled:cursor-not-allowed",

@@ -4,17 +4,22 @@ import { PrismaAdapter } from "@auth/prisma-adapter"
 import { compare } from "bcryptjs"
 import { prisma } from "@/lib/prisma"
 
+const SESSION_SHORT =  8 * 60 * 60        //  8 hours (normal session)
+const SESSION_LONG  = 30 * 24 * 60 * 60   // 30 days  (remember me)
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [
     Credentials({
       credentials: {
-        email:    { label: "Correo electrónico", type: "email"    },
-        password: { label: "Contraseña",         type: "password" },
+        email:      { label: "Correo electrónico", type: "email"    },
+        password:   { label: "Contraseña",         type: "password" },
+        rememberMe: { label: "Mantener sesión",    type: "text"     },
       },
       async authorize(credentials) {
-        const email    = credentials?.email    as string | undefined
-        const password = credentials?.password as string | undefined
+        const email      = credentials?.email      as string | undefined
+        const password   = credentials?.password   as string | undefined
+        const rememberMe = credentials?.rememberMe === "true"
 
         if (!email || !password) return null
 
@@ -37,18 +42,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         return {
-          id:       user.id,
-          email:    user.email    ?? "",
-          name:     user.name     ?? "",
-          role:     user.role,
-          isActive: user.isActive,
+          id:         user.id,
+          email:      user.email    ?? "",
+          name:       user.name     ?? "",
+          role:       user.role,
+          isActive:   user.isActive,
+          rememberMe,
         }
       },
     }),
   ],
   session: {
     strategy: "jwt",
-    maxAge:   8 * 60 * 60, // 8 hours — re-login required each working day
+    // Cookie lifetime is always 30 days so persistent sessions work.
+    // The JWT's own exp claim (set in the jwt callback below) is what
+    // actually enforces the 8-hour vs 30-day distinction.
+    maxAge: SESSION_LONG,
   },
   pages: {
     signIn: "/login",
@@ -56,18 +65,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     jwt({ token, user }) {
       if (user) {
-        // Snapshot role and isActive at login time into the JWT.
-        // Changes to either field won't be reflected until the token expires
-        // and the user logs in again (JWT strategy limitation — see middleware.ts).
-        token.role     = (user as { role?: string }).role
-        token.isActive = (user as { isActive?: boolean }).isActive
+        // Snapshot auth fields at login time — see middleware.ts for JWT limitation note
+        token.role       = (user as { role?: string }).role
+        token.isActive   = (user as { isActive?: boolean }).isActive
+        token.rememberMe = (user as { rememberMe?: boolean }).rememberMe ?? false
+
+        // Override the token expiry based on the user's choice.
+        // NextAuth reads token.exp to decide if the JWT is still valid.
+        const maxAge = token.rememberMe ? SESSION_LONG : SESSION_SHORT
+        token.exp    = Math.floor(Date.now() / 1000) + maxAge
       }
       return token
     },
     session({ session, token }) {
-      if (token.sub)              session.user.id       = token.sub
-      if (token.role)             session.user.role     = token.role     as string
-      if (token.isActive != null) session.user.isActive = token.isActive as boolean
+      if (token.sub)              session.user.id         = token.sub
+      if (token.role)             session.user.role       = token.role       as string
+      if (token.isActive != null) session.user.isActive   = token.isActive   as boolean
       return session
     },
   },

@@ -1,16 +1,17 @@
 ﻿"use client"
 
-import { useState, useTransition } from "react"
+import { useState, useTransition, useRef, useEffect } from "react"
 import { useRouter }               from "next/navigation"
 import {
   Receipt, Bell, ChevronDown, Search, DollarSign,
   Clock, AlertCircle, CheckCircle2, X, Eye,
   ChevronLeft, ChevronRight, Printer, Mail,
   FileDown, MessageCircle, QrCode, Droplets, Calendar, Filter,
+  MoreVertical, Ban, Loader2,
 } from "lucide-react"
 import { cn }             from "@/lib/utils"
 import type { SerializedInvoice, SerializedInvoiceDetail, InvoiceStats } from "@/app/actions/invoices"
-import { getInvoiceById } from "@/app/actions/invoices"
+import { getInvoiceById, cancelInvoice } from "@/app/actions/invoices"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,96 @@ function fmtRD(n: number) {
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("es-DO", { day: "2-digit", month: "short", year: "numeric" })
+}
+
+// ─── Print invoice ────────────────────────────────────────────────────────────
+// Opens a browser-print-ready HTML page in a new tab.
+// Works for both active and CANCELLED invoices (shows FACTURA CANCELADA banner).
+// No PDF library required — uses the browser's native print dialog.
+
+function printInvoice(d: SerializedInvoiceDetail) {
+  const isCancelled = d.status === "CANCELLED"
+  const fmtN  = (n: number, dec = 2) => `RD$${n.toLocaleString("es-DO", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`
+  const fmtL  = (iso: string) => new Date(iso).toLocaleDateString("es-DO", { day: "2-digit", month: "long", year: "numeric" })
+  const fmtDT = (iso: string) => new Date(iso).toLocaleString("es-DO", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })
+
+  const cancelledBanner = isCancelled ? `
+    <div class="cancelled-banner">
+      <div class="cancelled-title">&#9940; FACTURA CANCELADA</div>
+      ${d.cancelledAt   ? `<p>Cancelada el ${fmtDT(d.cancelledAt)}${d.cancelledByName ? ` por <strong>${d.cancelledByName}</strong>` : ""}</p>` : ""}
+      ${d.cancellationReason ? `<p><strong>Motivo:</strong> ${d.cancellationReason}</p>` : ""}
+    </div>` : ""
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>${d.invoiceNumber}${isCancelled ? " — CANCELADA" : ""}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1e293b;padding:32px;max-width:780px;margin:0 auto}
+  .print-btn{position:fixed;top:16px;right:16px;background:#1a3fa0;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:bold;cursor:pointer}
+  @media print{.print-btn{display:none}body{padding:16px}}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #1a3fa0}
+  .co-name{font-size:17px;font-weight:bold;color:#1a3fa0}.co-sub{font-size:11px;color:#64748b;margin-top:3px}
+  .inv-num{font-size:22px;font-weight:bold;color:#1a3fa0;text-align:right}.inv-label{font-size:11px;color:#64748b;text-align:right;margin-top:3px}
+  .cancelled-banner{background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:14px 20px;margin-bottom:20px;text-align:center}
+  .cancelled-title{color:#dc2626;font-size:18px;font-weight:bold;letter-spacing:3px;margin-bottom:6px}
+  .cancelled-banner p{color:#7f1d1d;font-size:11px;margin-top:3px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+  .box{background:#f8fafc;border-radius:6px;padding:12px}
+  .box-lbl{font-size:10px;font-weight:bold;text-transform:uppercase;color:#94a3b8;margin-bottom:6px;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse;margin-bottom:18px}
+  thead th{background:#f1f5f9;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:bold}
+  tbody td{padding:10px;border-bottom:1px solid #f1f5f9}
+  .tr{text-align:right}
+  .totals-wrap{display:flex;justify-content:flex-end;margin-bottom:20px}
+  .totals{width:260px}
+  .tot-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .tot-grand{font-weight:bold;font-size:15px;border-top:2px solid #1a3fa0;border-bottom:none;padding-top:10px}
+  .footer{margin-top:30px;border-top:1px solid #e2e8f0;padding-top:14px;text-align:center;color:#94a3b8;font-size:10px}
+  .truck-box{display:flex;align-items:center;gap:12px;background:#f8fafc;border-radius:6px;padding:10px 14px;margin-bottom:18px}
+  .truck-code{background:#1a3fa0;color:white;font-family:monospace;font-weight:bold;padding:4px 10px;border-radius:6px;font-size:11px;letter-spacing:1px}
+  .notes-box{background:#f8fafc;border-radius:6px;padding:12px;margin-bottom:18px}
+  .notes-lbl{font-size:10px;font-weight:bold;text-transform:uppercase;color:#94a3b8;margin-bottom:6px}
+</style></head><body>
+<button class="print-btn" onclick="window.print()">&#128438; Imprimir</button>
+${cancelledBanner}
+<div class="header">
+  <div><div class="co-name">LBP Inversiones y Servicios S.R.L.</div><div class="co-sub">Distribución de Diésel</div></div>
+  <div><div class="inv-num">${d.invoiceNumber}</div><div class="inv-label">FACTURA${isCancelled ? " (CANCELADA)" : ""}</div></div>
+</div>
+<div class="grid2">
+  <div class="box"><div class="box-lbl">Fecha de emisión</div><strong>${fmtL(d.issueDate)}</strong></div>
+  <div class="box"><div class="box-lbl">Fecha de vencimiento</div><strong>${d.dueDate ? fmtL(d.dueDate) : "Contado (pago al instante)"}</strong></div>
+</div>
+<div class="grid2">
+  <div class="box"><div class="box-lbl">De</div><strong>LBP Inversiones y Servicios S.R.L.</strong><br>Empresa de Distribución de Diésel</div>
+  <div class="box"><div class="box-lbl">Para</div><strong>${d.customerName}</strong>${d.customerPhone ? `<br>${d.customerPhone}` : ""}${d.customerEmail ? `<br>${d.customerEmail}` : ""}${d.customerRnc ? `<br>RNC: ${d.customerRnc}` : ""}${d.customerAddress ? `<br>${d.customerAddress}` : ""}</div>
+</div>
+${d.truckCode ? `<div class="truck-box"><span class="truck-code">${d.truckCode}</span><span><strong>${d.truckName}</strong>${d.truckPlate ? ` · Placa: ${d.truckPlate}` : ""}</span></div>` : ""}
+<table>
+  <thead><tr><th>Descripción</th><th class="tr">Cantidad</th><th class="tr">Precio/Gal</th><th class="tr">Importe</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Diésel — suministro<br><span style="color:#94a3b8;font-size:10px">${d.paymentType === "CREDIT" ? "Crédito" : "Contado"}</span></td>
+      <td class="tr">${d.gallons.toLocaleString("es-DO", { minimumFractionDigits: 2 })} gal</td>
+      <td class="tr">${fmtN(d.pricePerGallon, 4)}</td>
+      <td class="tr"><strong>${fmtN(d.subtotal)}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<div class="totals-wrap"><div class="totals">
+  <div class="tot-row"><span>Subtotal</span><span>${fmtN(d.subtotal)}</span></div>
+  <div class="tot-row"><span>ITBIS</span><span>${fmtN(d.tax)}</span></div>
+  <div class="tot-row"><span>Descuento</span><span>−${fmtN(d.discount)}</span></div>
+  <div class="tot-row tot-grand"><span>Total</span><span>${fmtN(d.total)}</span></div>
+  <div class="tot-row" style="border-bottom:none"><span>Monto pagado</span><span style="color:#16a34a">${fmtN(d.amountPaid)}</span></div>
+  <div class="tot-row" style="border-bottom:none;font-weight:bold"><span>Balance pendiente</span><span style="color:${d.balanceDue > 0 ? "#dc2626" : "#16a34a"}">${fmtN(d.balanceDue)}</span></div>
+</div></div>
+${(d.notes || d.supplyNotes) ? `<div class="notes-box"><div class="notes-lbl">Notas</div>${d.notes ? `<p>${d.notes}</p>` : ""}${d.supplyNotes ? `<p style="color:#64748b;margin-top:4px">${d.supplyNotes}</p>` : ""}</div>` : ""}
+<div class="footer">LBP Inversiones y Servicios S.R.L. &nbsp;·&nbsp; Generado el ${fmtDT(new Date().toISOString())}</div>
+</body></html>`
+
+  const win = window.open("", "_blank", "width=860,height=900")
+  if (win) { win.document.write(html); win.document.close() }
 }
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
@@ -79,6 +170,206 @@ function KpiCard({ icon: Icon, iconBg, iconColor, label, value, sub, highlight }
   )
 }
 
+// ─── Row actions menu ─────────────────────────────────────────────────────────
+
+function RowActionsMenu({
+  inv,
+  onViewDetail,
+  onCancel,
+  onPrint,
+  isLoadingDetail,
+  isPrinting,
+}: {
+  inv: SerializedInvoice
+  onViewDetail: () => void
+  onCancel: () => void
+  onPrint: () => void
+  isLoadingDetail: boolean
+  isPrinting: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [open])
+
+  const canCancel = inv.status !== "CANCELLED" && inv.status !== "PAID"
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center gap-1">
+      <button
+        onClick={onViewDetail}
+        disabled={isLoadingDetail || isPrinting}
+        title="Ver detalle"
+        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
+      >
+        {isLoadingDetail
+          ? <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          : <Eye className="w-4 h-4" />
+        }
+      </button>
+      <button
+        onClick={() => setOpen(v => !v)}
+        disabled={isLoadingDetail || isPrinting}
+        title="Más acciones"
+        className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+      >
+        {isPrinting
+          ? <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+          : <MoreVertical className="w-4 h-4" />
+        }
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-slate-100 py-1 z-30">
+          <button
+            onClick={() => { setOpen(false); onPrint() }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            <Printer className="w-4 h-4 shrink-0 text-slate-400" />
+            Imprimir / PDF
+          </button>
+          <div className="my-1 border-t border-slate-100" />
+          {/* Edición: pendiente de implementar con validaciones seguras (Fase 6) */}
+          <button
+            onClick={() => { setOpen(false); onCancel() }}
+            disabled={!canCancel}
+            className={cn(
+              "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors",
+              canCancel
+                ? "text-red-600 hover:bg-red-50 cursor-pointer"
+                : "text-slate-300 cursor-not-allowed",
+            )}
+          >
+            <Ban className="w-4 h-4 shrink-0" />
+            Cancelar factura
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Cancel confirmation modal ────────────────────────────────────────────────
+
+function CancelModal({
+  inv,
+  onClose,
+  onSuccess,
+}: {
+  inv: SerializedInvoice
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [reason,  setReason]  = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setError(null)
+    setLoading(true)
+    const result = await cancelInvoice(inv.id, reason)
+    setLoading(false)
+    if (!result.ok) { setError(result.error); return }
+    onSuccess()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center shrink-0">
+              <Ban className="w-5 h-5 text-red-600" />
+            </div>
+            <div>
+              <p className="font-bold text-slate-900">Cancelar factura</p>
+              <p className="text-xs text-slate-500 font-sans mt-0.5">Esta acción no se puede deshacer</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {/* Invoice summary */}
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-sans text-slate-500">Factura</span>
+              <span className="font-mono text-xs font-bold text-[#1a3fa0]">{inv.invoiceNumber}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-sans text-slate-500">Cliente</span>
+              <span className="text-sm font-semibold text-slate-800">{inv.customerName}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-sans text-slate-500">Total</span>
+              <span className="text-sm font-bold text-slate-900">{fmtRD(inv.total)}</span>
+            </div>
+          </div>
+
+          {/* Warning */}
+          <div className="flex items-start gap-2.5 px-3.5 py-3 bg-amber-50 border border-amber-100 rounded-xl">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs font-sans text-amber-700 leading-relaxed">
+              Al cancelar esta factura su estado cambiará a <strong>Cancelada</strong> y quedará excluida de todos los reportes y cobros. El suministro asociado permanecerá registrado.
+            </p>
+          </div>
+
+          {/* Reason textarea */}
+          <div className="space-y-1.5">
+            <label className="block text-sm font-semibold text-slate-700">
+              Motivo de cancelación <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              rows={3}
+              placeholder="Describe el motivo de la cancelación (mínimo 10 caracteres)..."
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400 transition-all resize-none"
+            />
+            <p className="text-[11px] font-sans text-slate-400">{reason.trim().length}/10 caracteres mínimo</p>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 border border-red-100">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-sm font-sans text-red-600">{error}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-3 px-6 py-4 border-t border-slate-100">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            Mantener factura
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={loading || reason.trim().length < 10}
+            className="flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Cancelando…</> : "Confirmar cancelación"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Invoice detail modal ─────────────────────────────────────────────────────
 
 function InvoiceDetailModal({
@@ -89,13 +380,10 @@ function InvoiceDetailModal({
 }) {
   const cfg = STATUS_CONFIG[detail.status] ?? STATUS_CONFIG.PENDING
 
-  // Future feature buttons — all disabled/placeholder for now
-  const FUTURE_ACTIONS = [
-    { icon: FileDown,      label: "Descargar PDF",    hint: "Próximamente" },
-    { icon: Printer,       label: "Imprimir",         hint: "Próximamente" },
+  const STUB_ACTIONS = [
     { icon: Mail,          label: "Enviar por email",  hint: "Próximamente" },
     { icon: MessageCircle, label: "WhatsApp",         hint: "Próximamente" },
-    { icon: QrCode,        label: "Código QR",        hint: "Fase 4" },
+    { icon: QrCode,        label: "Código QR",        hint: "Fase 6" },
   ]
 
   return (
@@ -121,9 +409,18 @@ function InvoiceDetailModal({
 
         <div className="px-6 py-5 space-y-5">
 
-          {/* ── Future actions bar ─────────────────────────────────────────── */}
+          {/* ── Actions bar ────────────────────────────────────────────────── */}
           <div className="flex items-center gap-2 flex-wrap">
-            {FUTURE_ACTIONS.map(a => {
+            {/* Imprimir / PDF — functional */}
+            <button
+              onClick={() => printInvoice(detail)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold font-sans transition-all hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Imprimir / PDF
+            </button>
+            {/* Stub actions — pending implementation */}
+            {STUB_ACTIONS.map(a => {
               const Icon = a.icon
               return (
                 <button key={a.label} disabled title={a.hint}
@@ -266,6 +563,30 @@ function InvoiceDetailModal({
             </div>
           )}
 
+          {/* ── Cancellation info ─────────────────────────────────────────── */}
+          {detail.status === "CANCELLED" && detail.cancelledAt && (
+            <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Ban className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                <p className="text-[10px] font-sans font-semibold text-red-500 uppercase tracking-wider">Factura cancelada</p>
+              </div>
+              <p className="text-xs font-sans text-red-700 mb-1">
+                <span className="font-semibold">Fecha:</span>{" "}
+                {new Date(detail.cancelledAt).toLocaleString("es-DO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </p>
+              {detail.cancelledByName && (
+                <p className="text-xs font-sans text-red-700 mb-1">
+                  <span className="font-semibold">Cancelado por:</span> {detail.cancelledByName}
+                </p>
+              )}
+              {detail.cancellationReason && (
+                <p className="text-xs font-sans text-red-700">
+                  <span className="font-semibold">Motivo:</span> {detail.cancellationReason}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* ── Payment history ───────────────────────────────────────────── */}
           <div>
             <p className="text-[10px] font-sans font-semibold text-slate-400 uppercase tracking-wider mb-2">Historial de pagos</p>
@@ -320,8 +641,10 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
   const [dateTo,      setDateTo]      = useState("")
   const [custId,      setCustId]      = useState("")
   const [page,        setPage]        = useState(1)
-  const [detail,      setDetail]      = useState<SerializedInvoiceDetail | null>(null)
-  const [loadingId,   setLoadingId]   = useState<string | null>(null)
+  const [detail,       setDetail]       = useState<SerializedInvoiceDetail | null>(null)
+  const [loadingId,    setLoadingId]    = useState<string | null>(null)
+  const [printingId,   setPrintingId]   = useState<string | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<SerializedInvoice | null>(null)
 
   // ── Client-side filter ─────────────────────────────────────────────────────
   const q = search.toLowerCase().trim()
@@ -341,15 +664,22 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
   const safePage   = Math.min(page, totalPages)
   const paginated  = filtered.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE)
 
-  // ── Totals ─────────────────────────────────────────────────────────────────
-  const filteredTotal   = filtered.reduce((s, i) => s + i.total,      0)
-  const filteredPending = filtered.reduce((s, i) => s + i.balanceDue, 0)
+  // ── Totals — CANCELLED invoices are excluded (write-offs, not active receivables)
+  const filteredTotal   = filtered.reduce((s, i) => i.status === "CANCELLED" ? s : s + i.total,      0)
+  const filteredPending = filtered.reduce((s, i) => i.status === "CANCELLED" ? s : s + i.balanceDue, 0)
 
   async function openDetail(id: string) {
     setLoadingId(id)
     const data = await getInvoiceById(id)
     setDetail(data)
     setLoadingId(null)
+  }
+
+  async function handlePrint(inv: SerializedInvoice) {
+    setPrintingId(inv.id)
+    const data = await getInvoiceById(inv.id)
+    setPrintingId(null)
+    if (data) printInvoice(data)
   }
 
   function handleStatusFilter(s: string) {
@@ -584,17 +914,14 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
 
                         {/* Acciones */}
                         <td className="px-5 py-4 text-center">
-                          <button
-                            onClick={() => openDetail(inv.id)}
-                            disabled={loadingId === inv.id}
-                            title="Ver detalle"
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            {loadingId === inv.id
-                              ? <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                              : <Eye className="w-4 h-4" />
-                            }
-                          </button>
+                          <RowActionsMenu
+                            inv={inv}
+                            onViewDetail={() => openDetail(inv.id)}
+                            onCancel={() => setCancelTarget(inv)}
+                            onPrint={() => handlePrint(inv)}
+                            isLoadingDetail={loadingId === inv.id}
+                            isPrinting={printingId === inv.id}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -657,6 +984,18 @@ export default function InvoicesClient({ invoices, stats, initialSearch, initial
 
       {/* ══ DETAIL MODAL ══════════════════════════════════════════════════════ */}
       {detail && <InvoiceDetailModal detail={detail} onClose={() => setDetail(null)} />}
+
+      {/* ══ CANCEL MODAL ══════════════════════════════════════════════════════ */}
+      {cancelTarget && (
+        <CancelModal
+          inv={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onSuccess={() => {
+            setCancelTarget(null)
+            router.refresh()
+          }}
+        />
+      )}
     </div>
   )
 }
